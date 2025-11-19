@@ -5,7 +5,7 @@ An intelligent adventure planning agent built with LangChain, LangGraph, and Lan
 ## Features
 
 - **Text-to-Adventure AI Generation**: Natural language input processing - simply describe your adventure in plain text and the AI generates a complete plan
-- **Multi-Agent Architecture**: 14 specialized agents for comprehensive adventure planning
+- **Multi-Agent Architecture**: 17 specialized agents plus orchestrator for comprehensive adventure planning
 - **Orchestrator Agent**: Intelligently routes requests to appropriate specialized agents using LLM analysis
 - **Core Planning Agents**:
   - **Geographic Agent**: Location data, coordinates, and geographic information
@@ -149,9 +149,10 @@ adventure-agent/
 │           ├── planning_agent.py       # Planning and itinerary specialist
 │           ├── community_agent.py      # Community and social specialist
 │           ├── photography_agent.py   # Photography and media specialist
-│           └── historical_agent.py     # Historical and cultural specialist
-│           # Note: route_planning_agent.py, bikepacking_agent.py, and advocacy_agent.py
-│           # exist but are not currently wired into the graph
+│           ├── historical_agent.py     # Historical and cultural specialist
+│           ├── route_planning_agent.py # Route planning specialist (RideWithGPS, Strava)
+│           ├── bikepacking_agent.py   # Bikepacking route specialist
+│           └── advocacy_agent.py      # Trail advocacy and long-distance routes specialist
 └── tests/
     ├── conftest.py
     ├── integration_tests/  # Integration tests
@@ -212,7 +213,7 @@ Specify the activity type in your user preferences:
 
 ### Agent System
 
-The adventure agent uses a multi-agent architecture with 14 specialized agents organized by function:
+The adventure agent uses a multi-agent architecture with 17 specialized agents (plus orchestrator) organized by function:
 
 #### Core Planning Agents
 
@@ -222,33 +223,42 @@ The adventure agent uses a multi-agent architecture with 14 specialized agents o
    - Mountain biking from [MTB Project](https://www.mtbproject.com)
    - Hiking from [Hiking Project](https://www.hikingproject.com)
    - Trail running from [Trail Run Project](https://www.trailrunproject.com)
-4. **Planning Agent**: Creates detailed day-by-day itineraries, logistics, and trip planning
+4. **Route Planning Agent**: Expert on route planning tools:
+   - [RideWithGPS](https://ridewithgps.com) - Route planning, navigation, large route library
+   - [Strava](https://www.strava.com) - Popular routes, segments, community-driven data
+5. **Bikepacking Agent**: Expert on bikepacking routes:
+   - [Bikepacking.com](https://bikepacking.com) - Curated bikepacking routes worldwide
+   - [Bikepacking Roots](https://bikepackingroots.org) - Conservation-focused route development
+6. **Planning Agent**: Creates detailed day-by-day itineraries, logistics, and trip planning
 
 #### Land Management & Regulations
 
 7. **BLM Agent**: Expert on Bureau of Land Management lands, access points, and regulations
-8. **Permits Agent**: Permit requirements, regulations, access restrictions, and application processes
+8. **Advocacy Agent**: Expert on trail advocacy and long-distance routes:
+   - [IMBA](https://www.imba.com) - Trail networks, access, advocacy
+   - [Adventure Cycling Association](https://www.adventurecycling.org) - Long-distance cycling routes
+9. **Permits Agent**: Permit requirements, regulations, access restrictions, and application processes
 
 #### Safety & Conditions
 
-9. **Weather Agent**: Real-time weather forecasts, trail conditions, seasonal information, and safety considerations
-10. **Safety Agent**: Safety information, emergency contacts, risk assessment, and wildlife alerts
+10. **Weather Agent**: Real-time weather forecasts, trail conditions, seasonal information, and safety considerations
+11. **Safety Agent**: Safety information, emergency contacts, risk assessment, and wildlife alerts
 
 #### Logistics & Services
 
-11. **Accommodation Agent**: Finds hotels, campgrounds, hostels, and lodging options
-12. **Transportation Agent**: Parking information, shuttle services, public transit, and bike transport
-13. **Food Agent**: Food options, resupply points, water sources, and local restaurant recommendations
+12. **Accommodation Agent**: Finds hotels, campgrounds, hostels, and lodging options
+13. **Transportation Agent**: Parking information, shuttle services, public transit, and bike transport
+14. **Food Agent**: Food options, resupply points, water sources, and local restaurant recommendations
 
 #### Community & Culture
 
-14. **Community Agent**: Local clubs, events, group rides, and community resources
-15. **Historical Agent**: Historical sites, cultural significance, and local history
+15. **Community Agent**: Local clubs, events, group rides, and community resources
+16. **Historical Agent**: Historical sites, cultural significance, and local history
 
 #### Enhancement Agents
 
-16. **Gear Agent**: Recommends gear and products with affiliate links (revenue model)
-17. **Photography Agent**: Best photo spots, scenic viewpoints, sunrise/sunset locations, and media resources
+17. **Gear Agent**: Recommends gear and products with affiliate links (revenue model)
+18. **Photography Agent**: Best photo spots, scenic viewpoints, sunrise/sunset locations, and media resources
 
 ### Workflow
 
@@ -263,7 +273,10 @@ The agent workflow follows a priority-based routing system with AI-powered natur
    - Permits and regulations (permits_agent)
    - Safety information (safety_agent)
    - Trail data (trail_agent)
+   - Route planning (route_planning_agent)
+   - Bikepacking routes (bikepacking_agent)
    - Land management (blm_agent)
+   - Trail advocacy (advocacy_agent)
    - Transportation (transportation_agent)
    - Accommodations (accommodation_agent)
    - Food and resupply (food_agent)

@@ -237,7 +237,10 @@ Create a comprehensive, well-structured adventure plan that includes:
 - Permit requirements and regulations
 - Safety information and emergency contacts
 - Trail information
+- Route planning information (RideWithGPS, Strava routes)
+- Bikepacking routes (if applicable)
 - BLM land information (if applicable)
+- Trail advocacy and access information
 - Transportation and logistics
 - Accommodation options
 - Food and resupply information
@@ -261,7 +264,10 @@ Agent Outputs:
 - Permits Info: {permits_info}
 - Safety Info: {safety_info}
 - Trail Info: {trail_info}
+- Route Planning Info: {route_planning_info}
+- Bikepacking Info: {bikepacking_info}
 - BLM Info: {blm_info}
+- Advocacy Info: {advocacy_info}
 - Transportation Info: {transportation_info}
 - Accommodation Info: {accommodation_info}
 - Food Info: {food_info}
@@ -289,7 +295,10 @@ Agent Outputs:
             "permits_info": state.permits_info or {},
             "safety_info": state.safety_info or {},
             "trail_info": state.trail_info,
+            "route_planning_info": state.get("route_planning_info", []),
+            "bikepacking_info": state.get("bikepacking_info", []),
             "blm_info": state.blm_info,
+            "advocacy_info": state.get("advocacy_info") or {},
             "transportation_info": state.transportation_info or {},
             "accommodation_info": state.accommodation_info,
             "food_info": state.food_info or {},

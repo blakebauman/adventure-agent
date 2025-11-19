@@ -132,6 +132,9 @@ class AdventureState(TypedDict, total=False):
     community_info: Optional[Dict[str, Any]]
     photography_info: Optional[Dict[str, Any]]
     historical_info: Optional[Dict[str, Any]]
+    route_planning_info: List[TrailInfo]
+    bikepacking_info: List[TrailInfo]
+    advocacy_info: Optional[Dict[str, Any]]
 
     # Final output
     adventure_plan: Optional[AdventurePlan]

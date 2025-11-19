@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a multi-agent architecture to plan mountain bike adventures, bikepacking trips, and outdoor adventures across the US and Canada.
+Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a multi-agent architecture with 17 specialized agents plus orchestrator to plan mountain bike adventures, bikepacking trips, and outdoor adventures across the US and Canada.
 
 ## Development Commands
 
@@ -40,11 +40,11 @@ Adventure Agent is an intelligent adventure planning system built with LangChain
 ## Architecture Overview
 
 ### Multi-Agent System
-The system uses a **hub-and-spoke architecture** with an Orchestrator agent managing 14+ specialized agents:
+The system uses a **hub-and-spoke architecture** with an Orchestrator agent managing 17 specialized agents:
 
 1. **Orchestrator Agent** (`src/agent/agents/orchestrator.py`) - Routes requests using LLM analysis and structured output (Pydantic models) for text-to-adventure generation
-2. **Core Planning**: Geo, Trail, Planning agents
-3. **Land Management**: BLM, Permits agents  
+2. **Core Planning**: Geo, Trail, Route Planning, Bikepacking, Planning agents
+3. **Land Management**: BLM, Advocacy, Permits agents  
 4. **Safety & Conditions**: Weather, Safety agents
 5. **Logistics**: Accommodation, Transportation, Food agents
 6. **Enhancement**: Gear, Photography, Community, Historical agents
@@ -55,6 +55,7 @@ The system uses a **hub-and-spoke architecture** with an Orchestrator agent mana
 - `AdventureState` - Main graph state with typed dictionaries
 - `UserPreferences` - User input preferences  
 - `AdventurePlan` - Final structured output
+- Additional fields: `route_planning_info`, `bikepacking_info`, `advocacy_info` for new agents
 
 **Graph Definition** (`src/agent/graph.py`):
 - StateGraph with conditional routing based on required agents
@@ -70,6 +71,9 @@ The system uses a **hub-and-spoke architecture** with an Orchestrator agent mana
 **Tools** (`src/agent/tools.py`):
 - 60+ tools for external integrations
 - Trail data from MTB Project, Hiking Project, Trail Run Project
+- Route planning from RideWithGPS, Strava
+- Bikepacking routes from Bikepacking.com, Bikepacking Roots
+- IMBA trail networks, Adventure Cycling Association routes
 - BLM lands, accommodations, weather, safety, gear recommendations
 
 ### Text-to-Adventure Feature
@@ -81,10 +85,15 @@ The system supports **natural language input processing**:
 
 ### Agent Execution Flow
 1. Orchestrator analyzes user input and determines required agents
-2. Agents execute in priority order: geo → weather → permits → safety → trail → blm → transportation → accommodation → food → gear → community → planning → photography → historical
+2. Agents execute in priority order: geo → weather → permits → safety → trail → route_planning → bikepacking → blm → advocacy → transportation → accommodation → food → gear → community → planning → photography → historical
 3. Planning agent synthesizes all information into comprehensive itinerary
 4. Human review checkpoint (if needed for complex/expensive plans)
 5. Final adventure plan returned
+
+### Specialized Agent Capabilities
+- **Route Planning Agent**: RideWithGPS routes, Strava community routes and segments
+- **Bikepacking Agent**: Multi-day bikepacking routes from Bikepacking.com and Bikepacking Roots
+- **Advocacy Agent**: IMBA trail networks, Adventure Cycling Association long-distance routes, trail access information
 
 ### Testing Strategy
 - **Unit tests** (`tests/unit_tests/`) - Individual agent and component testing

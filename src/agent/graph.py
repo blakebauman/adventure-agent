@@ -42,6 +42,9 @@ from agent.agents import (
     CommunityAgent,
     PhotographyAgent,
     HistoricalAgent,
+    RoutePlanningAgent,
+    BikepackingAgent,
+    AdvocacyAgent,
 )
 
 
@@ -71,6 +74,9 @@ food_agent = FoodAgent()
 community_agent = CommunityAgent()
 photography_agent = PhotographyAgent()
 historical_agent = HistoricalAgent()
+route_planning_agent = RoutePlanningAgent()
+bikepacking_agent = BikepackingAgent()
+advocacy_agent = AdvocacyAgent()
 
 
 async def orchestrator_node(state: AdventureState) -> Dict[str, Any]:
@@ -547,6 +553,136 @@ async def historical_agent_node(state: AdventureState) -> Dict[str, Any]:
         }
 
 
+async def route_planning_agent_node(state: AdventureState) -> Dict[str, Any]:
+    """Route planning agent node - provides route planning information from RideWithGPS and Strava."""
+    try:
+        context = state.agent_context.get("route_planning_agent", state.user_input)
+        
+        location = state.geo_info.get("location", "") if state.geo_info else ""
+        if not location:
+            location = state.user_preferences.get("region", "") if state.user_preferences else ""
+        
+        activity_type = "mountain_biking"
+        if state.user_preferences:
+            activity_type = state.user_preferences.get("activity_type") or state.user_preferences.get("adventure_type", "mountain_biking")
+        
+        distance = None
+        if state.user_preferences:
+            distance_pref = state.user_preferences.get("distance_preference")
+            # Map distance preference to approximate miles
+            if distance_pref == "short":
+                distance = 10.0
+            elif distance_pref == "medium":
+                distance = 25.0
+            elif distance_pref == "long":
+                distance = 50.0
+            elif distance_pref == "epic":
+                distance = 100.0
+
+        # Search both RideWithGPS and Strava routes
+        ridewithgps_routes = await route_planning_agent.search_ridewithgps_routes(
+            location, activity_type, distance, context
+        )
+        strava_routes = await route_planning_agent.search_strava_routes(
+            location, activity_type, "popular", context
+        )
+
+        # Combine routes from both sources
+        all_routes = list(ridewithgps_routes) + list(strava_routes)
+
+        return {
+            "route_planning_info": all_routes,
+            "completed_agents": state.completed_agents + ["route_planning_agent"],
+        }
+    except Exception as e:
+        error_msg = f"Route planning agent error: {str(e)}"
+        return {
+            "route_planning_info": [],
+            "completed_agents": state.completed_agents + ["route_planning_agent"],
+            "errors": state.get("errors", []) + [error_msg],
+        }
+
+
+async def bikepacking_agent_node(state: AdventureState) -> Dict[str, Any]:
+    """Bikepacking agent node - provides bikepacking route information."""
+    try:
+        context = state.agent_context.get("bikepacking_agent", state.user_input)
+        
+        location = state.geo_info.get("location", "") if state.geo_info else ""
+        if not location:
+            location = state.user_preferences.get("region", "") if state.user_preferences else ""
+        
+        route_type = state.user_preferences.get("route_type") if state.user_preferences else None
+        duration_days = state.user_preferences.get("duration_days", 1) if state.user_preferences else None
+
+        # Search bikepacking.com routes
+        bikepacking_routes = await bikepacking_agent.search_bikepacking_routes(
+            location, route_type, duration_days, context
+        )
+        
+        # Search Bikepacking Roots routes
+        bikepacking_roots_routes = await bikepacking_agent.search_bikepacking_roots_routes(
+            location, context
+        )
+
+        # Combine routes from both sources
+        all_routes = list(bikepacking_routes) + list(bikepacking_roots_routes)
+
+        return {
+            "bikepacking_info": all_routes,
+            "completed_agents": state.completed_agents + ["bikepacking_agent"],
+        }
+    except Exception as e:
+        error_msg = f"Bikepacking agent error: {str(e)}"
+        return {
+            "bikepacking_info": [],
+            "completed_agents": state.completed_agents + ["bikepacking_agent"],
+            "errors": state.get("errors", []) + [error_msg],
+        }
+
+
+async def advocacy_agent_node(state: AdventureState) -> Dict[str, Any]:
+    """Advocacy agent node - provides trail advocacy and long-distance route information."""
+    try:
+        context = state.agent_context.get("advocacy_agent", state.user_input)
+        
+        location = state.geo_info.get("location", "") if state.geo_info else ""
+        if not location:
+            location = state.user_preferences.get("region", "") if state.user_preferences else ""
+        
+        route_type = state.user_preferences.get("route_type") if state.user_preferences else None
+
+        # Get IMBA trail information
+        imba_info = await advocacy_agent.get_imba_trail_info(location, context)
+        
+        # Get Adventure Cycling routes
+        adventure_cycling_routes = await advocacy_agent.search_adventure_cycling_routes(
+            location, route_type, context
+        )
+        
+        # Get trail access information
+        trail_access_info = await advocacy_agent.get_trail_access_info(location)
+
+        # Combine all advocacy information
+        advocacy_info = {
+            "imba_info": imba_info,
+            "adventure_cycling_routes": adventure_cycling_routes,
+            "trail_access_info": trail_access_info,
+        }
+
+        return {
+            "advocacy_info": advocacy_info,
+            "completed_agents": state.completed_agents + ["advocacy_agent"],
+        }
+    except Exception as e:
+        error_msg = f"Advocacy agent error: {str(e)}"
+        return {
+            "advocacy_info": None,
+            "completed_agents": state.completed_agents + ["advocacy_agent"],
+            "errors": state.get("errors", []) + [error_msg],
+        }
+
+
 async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
     """Synthesize final adventure plan from all agent outputs.
     
@@ -630,15 +766,19 @@ def route_to_agents(state: AdventureState) -> str:
     if not remaining:
         return "synthesize"
 
-    # Priority order: geo -> weather -> permits -> safety -> trail -> blm -> transportation -> 
-    # accommodation -> food -> gear -> community -> planning -> photography -> historical
+    # Priority order: geo -> weather -> permits -> safety -> trail -> route_planning -> bikepacking -> 
+    # blm -> advocacy -> transportation -> accommodation -> food -> gear -> community -> planning -> 
+    # photography -> historical
     priority = [
         "geo_agent",
         "weather_agent",
         "permits_agent",
         "safety_agent",
         "trail_agent",
+        "route_planning_agent",
+        "bikepacking_agent",
         "blm_agent",
+        "advocacy_agent",
         "transportation_agent",
         "accommodation_agent",
         "food_agent",
@@ -664,7 +804,10 @@ def get_all_agent_edges() -> Dict[str, str]:
         "permits_agent",
         "safety_agent",
         "trail_agent",
+        "route_planning_agent",
+        "bikepacking_agent",
         "blm_agent",
+        "advocacy_agent",
         "transportation_agent",
         "accommodation_agent",
         "food_agent",
@@ -699,7 +842,10 @@ graph_builder = (
     .add_node("permits_agent", permits_agent_node, retry_policy=api_retry_policy)
     .add_node("safety_agent", safety_agent_node, retry_policy=api_retry_policy)
     .add_node("trail_agent", trail_agent_node, retry_policy=api_retry_policy)
+    .add_node("route_planning_agent", route_planning_agent_node, retry_policy=api_retry_policy)
+    .add_node("bikepacking_agent", bikepacking_agent_node, retry_policy=api_retry_policy)
     .add_node("blm_agent", blm_agent_node, retry_policy=api_retry_policy)
+    .add_node("advocacy_agent", advocacy_agent_node, retry_policy=api_retry_policy)
     .add_node("transportation_agent", transportation_agent_node, retry_policy=api_retry_policy)
     .add_node("accommodation_agent", accommodation_agent_node, retry_policy=api_retry_policy)
     .add_node("food_agent", food_agent_node, retry_policy=api_retry_policy)
@@ -717,7 +863,10 @@ graph_builder = (
     .add_conditional_edges("permits_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("safety_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("trail_agent", route_to_agents, all_agent_edges)
+    .add_conditional_edges("route_planning_agent", route_to_agents, all_agent_edges)
+    .add_conditional_edges("bikepacking_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("blm_agent", route_to_agents, all_agent_edges)
+    .add_conditional_edges("advocacy_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("transportation_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("accommodation_agent", route_to_agents, all_agent_edges)
     .add_conditional_edges("food_agent", route_to_agents, all_agent_edges)
