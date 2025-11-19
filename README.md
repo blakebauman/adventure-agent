@@ -1,6 +1,6 @@
 # Adventure Agent
 
-An intelligent adventure planning agent built with LangChain, LangGraph, and LangSmith. This system helps plan mountain bike adventures, bikepacking trips, and outdoor adventures across the United States and Canada.
+An intelligent adventure planning agent built with LangChain, LangGraph, and LangSmith. This system helps plan mountain bike adventures, bikepacking trips, and outdoor adventures. We're starting with the United States and Canada and plan to add more regions in the near future.
 
 ## Features
 
