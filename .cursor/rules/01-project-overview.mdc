@@ -1,0 +1,23 @@
+# Project Overview
+
+## Project Description
+Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a multi-agent architecture to plan mountain bike adventures, bikepacking trips, and outdoor adventures across the US and Canada.
+
+## Architecture
+- **Hub-and-Spoke Architecture**: Orchestrator agent manages 14+ specialized agents
+- **LangGraph**: StateGraph-based workflow orchestration with conditional routing
+- **State Management**: TypedDict-based state schema (`AdventureState`)
+- **Text-to-Adventure**: Natural language input processing with LLM-based intent extraction
+
+## Key Components
+- **Orchestrator** (`src/agent/agents/orchestrator.py`): Routes requests using LLM analysis and structured output
+- **Specialized Agents**: 14+ agents organized by function (geo, trail, weather, permits, safety, etc.)
+- **Graph** (`src/agent/graph.py`): Main LangGraph workflow definition
+- **State** (`src/agent/state.py`): TypedDict schemas for state management
+- **Tools** (`src/agent/tools.py`): 60+ tools for external integrations
+- **Config** (`src/agent/config.py`): Environment-based configuration
+
+## Entry Point
+- Main graph: `src/agent/graph.py:graph`
+- LangGraph config: `langgraph.json`
+- Package entry: `src/agent/__init__.py`

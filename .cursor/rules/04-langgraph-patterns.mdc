@@ -1,0 +1,73 @@
+# LangGraph Patterns
+
+## Graph Structure
+- Use `StateGraph` with `AdventureState` TypedDict
+- Define `Context` TypedDict for user_id and session_id
+- Add nodes with `.add_node()`
+- Use conditional edges for routing: `.add_conditional_edges()`
+- Compile with `.compile()`
+
+## Node Functions
+- All node functions are `async` and accept `state: AdventureState`
+- Return `Dict[str, Any]` with state updates
+- Use partial state updates (only return changed fields)
+
+## Conditional Routing
+```python
+def route_function(state: AdventureState) -> str:
+    """Route to next node based on state."""
+    # Logic to determine next node
+    return "next_node_name"
+
+graph.add_conditional_edges(
+    "current_node",
+    route_function,
+    {
+        "next_node_name": "next_node_name",
+        "end": END,
+    }
+)
+```
+
+## Retry Policies
+Apply retry policies to nodes with external API calls:
+
+```python
+from langgraph.types import RetryPolicy
+
+api_retry_policy = RetryPolicy(
+    max_attempts=3,
+    initial_interval=1.0,
+    backoff_factor=2.0,
+)
+
+graph.add_node("agent_node", agent_node_function, retry_policy=api_retry_policy)
+```
+
+## Human-in-the-Loop
+Use `interrupt()` for human review checkpoints:
+
+```python
+from langgraph.types import interrupt
+
+async def human_review_node(state: AdventureState) -> Dict[str, Any]:
+    """Human review checkpoint."""
+    review_data = {...}
+    human_decision = interrupt(review_data)
+    # Process decision
+    return {"approval_status": human_decision.get("status")}
+```
+
+## Checkpointing
+- Default: `CHECKPOINTER_TYPE="none"` (LangGraph API handles automatically)
+- Local dev: Use `MemorySaver` or `SqliteSaver`
+- Production: Use `PostgresSaver` for persistence
+
+## Graph Compilation
+```python
+compile_kwargs = {"name": "Adventure Agent"}
+if _checkpointer is not None:
+    compile_kwargs["checkpointer"] = _checkpointer
+
+graph = graph_builder.compile(**compile_kwargs)
+```

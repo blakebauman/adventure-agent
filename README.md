@@ -196,6 +196,8 @@ The adventure agent supports multiple outdoor activity types:
 - **Trail Running** (`trail_running`) - Uses [Trail Run Project](https://www.trailrunproject.com) for trail data
 - **Bikepacking** (`bikepacking`) - Multi-day bike adventures
 
+> **Note**: We're starting with the current trail data sources listed above and will be adding more data sources in the near future.
+
 Specify the activity type in your user preferences:
 
 ```python

@@ -1,0 +1,70 @@
+# Testing Patterns
+
+## Test Structure
+- **Unit Tests**: `tests/unit_tests/` - Test individual agents and components
+- **Integration Tests**: `tests/integration_tests/` - Test full graph execution
+- **Fixtures**: `tests/conftest.py` - Shared test fixtures
+
+## Running Tests
+```bash
+# All tests
+./run.sh test
+
+# Unit tests only
+./run.sh test tests/unit_tests/
+
+# Integration tests only
+./run.sh test tests/integration_tests/
+
+# Direct pytest
+pytest
+```
+
+## Test Patterns
+```python
+import pytest
+from agent.agents.trail_agent import TrailAgent
+
+@pytest.mark.asyncio
+async def test_trail_agent():
+    """Test trail agent functionality."""
+    agent = TrailAgent()
+    result = await agent.search_trails("Colorado", "mountain_biking", "blue", None, "")
+    assert isinstance(result, list)
+    # Assertions
+```
+
+## Async Testing
+- Use `@pytest.mark.asyncio` for async test functions
+- Configure `anyio_backend` fixture in `conftest.py`:
+```python
+@pytest.fixture(scope="session")
+def anyio_backend():
+    return "asyncio"
+```
+
+## Mocking External APIs
+- Mock external API calls for consistent testing
+- Use pytest fixtures for mock data
+- Test error handling paths
+
+## Graph Testing
+Test graph execution:
+```python
+from agent.graph import graph
+
+async def test_graph_execution():
+    """Test full graph execution."""
+    state = {
+        "user_input": "Plan a mountain bike trip in Colorado",
+        "user_preferences": {"activity_type": "mountain_biking", "region": "Colorado"},
+    }
+    result = await graph.ainvoke(state)
+    assert "adventure_plan" in result
+```
+
+## Test Coverage
+- Test all agent methods
+- Test graph routing logic
+- Test error handling
+- Test state updates

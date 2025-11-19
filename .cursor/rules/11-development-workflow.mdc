@@ -1,0 +1,76 @@
+# Development Workflow
+
+## Setup
+```bash
+# Create virtual environment
+uv venv
+
+# Activate virtual environment
+source .venv/bin/activate
+
+# Install dependencies
+uv pip install -e .
+
+# Install dev dependencies
+uv pip install -e ".[dev]"
+```
+
+## Development Commands
+Use `./run.sh` script for common tasks:
+
+```bash
+# Development server
+./run.sh dev
+
+# Testing
+./run.sh test
+
+# Linting
+./run.sh lint
+
+# Type checking
+./run.sh typecheck
+
+# Install/update dependencies
+./run.sh install
+
+# Build Docker image
+./run.sh build
+
+# Clean build artifacts
+./run.sh clean
+```
+
+## Code Quality Checks
+Before committing:
+1. Run linting: `./run.sh lint` or `ruff check .`
+2. Run type checking: `./run.sh typecheck` or `mypy src/`
+3. Run tests: `./run.sh test` or `pytest`
+
+## Adding New Agents
+1. Create agent file in `src/agent/agents/agent_name.py`
+2. Follow agent pattern from `03-agent-patterns.mdc`
+3. Add agent to `src/agent/agents/__init__.py`
+4. Add node function to `src/agent/graph.py`
+5. Add node to graph builder
+6. Add routing logic
+7. Add tests in `tests/unit_tests/` and `tests/integration_tests/`
+
+## Adding New Tools
+1. Add tool function to `src/agent/tools.py`
+2. Use `@tool` decorator
+3. Document parameters and return values
+4. Handle errors gracefully
+5. Add tests
+
+## Git Workflow
+- Follow existing code structure and patterns
+- Add tests for new features
+- Update documentation as needed
+- Run code quality checks before committing
+
+## Debugging
+- Use LangGraph Studio for graph visualization: `langgraph dev`
+- Check LangSmith traces if enabled
+- Review error messages in `state.errors`
+- Use print statements or logging for debugging (remove before committing)

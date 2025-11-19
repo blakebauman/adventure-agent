@@ -1,0 +1,65 @@
+# Agent Development Patterns
+
+## Agent Structure
+All agents follow a consistent pattern:
+
+```python
+class AgentName:
+    """Agent description."""
+    
+    def __init__(self, model_name: str | None = None, temperature: float | None = None):
+        """Initialize the agent."""
+        self.llm = ChatOpenAI(
+            model_name=model_name or Config.OPENAI_MODEL,
+            temperature=temperature if temperature is not None else Config.OPENAI_TEMPERATURE,
+            api_key=Config.OPENAI_API_KEY,
+        )
+    
+    async def main_method(self, param1: str, param2: Optional[str] = None, context: str = "") -> Dict[str, Any]:
+        """Main agent method that returns structured data."""
+        # Implementation
+        pass
+```
+
+## Agent Best Practices
+1. **LLM Initialization**: Use `Config.OPENAI_MODEL` and `Config.OPENAI_TEMPERATURE` as defaults
+2. **Structured Output**: Use Pydantic models with `with_structured_output()` for LLM responses
+3. **Context Handling**: Accept `context` parameter for agent-specific instructions
+4. **Error Handling**: Return empty/default values on errors, don't raise exceptions
+5. **Tool Usage**: Use tools from `agent.tools` module for external API calls
+6. **Return Types**: Return `Dict[str, Any]` or specific TypedDict types from `agent.state`
+
+## Agent Node Pattern
+Graph nodes follow this pattern:
+
+```python
+async def agent_name_node(state: AdventureState) -> Dict[str, Any]:
+    """Agent node description."""
+    try:
+        context = state.agent_context.get("agent_name", state.user_input)
+        # Extract parameters from state
+        # Call agent method
+        result = await agent_name.method(...)
+        return {
+            "agent_output": result,
+            "completed_agents": state.completed_agents + ["agent_name"],
+        }
+    except Exception as e:
+        error_msg = f"Agent name error: {str(e)}"
+        return {
+            "agent_output": None,  # or empty list/dict
+            "completed_agents": state.completed_agents + ["agent_name"],
+            "errors": state.get("errors", []) + [error_msg],
+        }
+```
+
+## Activity Type Handling
+- Support multiple activity types: `mountain_biking`, `hiking`, `trail_running`, `bikepacking`
+- Use `activity_type` from `user_preferences` (fallback to `adventure_type` for backward compatibility)
+- Map skill levels to difficulty ratings based on activity type
+
+## State Access Patterns
+- Always check if optional state fields exist before accessing
+- Use `.get()` with defaults for optional fields
+- Update `completed_agents` list after each agent execution
+- Accumulate errors in `errors` list

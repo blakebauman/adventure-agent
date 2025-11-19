@@ -1,0 +1,61 @@
+# Structured Output Patterns
+
+## Pydantic Models
+Use Pydantic models for structured LLM output:
+
+```python
+from pydantic import BaseModel, Field
+
+class AnalysisModel(BaseModel):
+    """Structured analysis model."""
+    
+    field1: str = Field(description="Field description")
+    field2: Optional[int] = Field(default=None, description="Optional field")
+    field3: List[str] = Field(description="List field")
+```
+
+## LLM Structured Output
+Use `with_structured_output()` for type-safe extraction:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model_name=Config.OPENAI_MODEL, api_key=Config.OPENAI_API_KEY)
+llm_structured = llm.with_structured_output(AnalysisModel)
+
+# Use structured output
+result = await llm_structured.ainvoke(messages)
+# result is an instance of AnalysisModel
+```
+
+## Text-to-Adventure Extraction
+The orchestrator uses structured output to extract:
+- Activity type (mountain_biking, hiking, trail_running, bikepacking)
+- Location/region
+- Duration in days
+- Skill level (beginner, intermediate, advanced, expert)
+- Required agents list
+- Agent-specific context
+- Priority order
+
+## Orchestrator Pattern
+```python
+class AdventureAnalysis(BaseModel):
+    """Structured analysis of user request."""
+    
+    activity_type: str = Field(description="Type of activity")
+    location: Optional[str] = Field(default=None, description="Location")
+    duration_days: Optional[int] = Field(default=None, description="Duration")
+    required_agents: List[str] = Field(description="Required agents")
+    agent_context: Dict[str, str] = Field(default_factory=dict, description="Agent context")
+
+# In agent
+self.llm_structured = self.llm.with_structured_output(AdventureAnalysis)
+analysis = await self.llm_structured.ainvoke(messages)
+```
+
+## Benefits
+- Type safety: Pydantic validates output structure
+- No manual JSON parsing: Direct object access
+- Better error handling: Validation errors are caught early
+- IDE support: Autocomplete and type checking

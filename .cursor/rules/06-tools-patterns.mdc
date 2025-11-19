@@ -1,0 +1,70 @@
+# Tools Patterns
+
+## Tool Definition
+Use `@tool` decorator from `langchain.tools`:
+
+```python
+from langchain.tools import tool
+
+@tool
+def tool_name(param1: str, param2: Optional[str] = None) -> str:
+    """Tool description.
+    
+    Args:
+        param1: Parameter description
+        param2: Optional parameter description
+    
+    Returns:
+        JSON string or structured data
+    """
+    # Implementation
+    return json.dumps({...})
+```
+
+## Tool Categories
+Tools are organized by category in `src/agent/tools.py`:
+- **BLM Tools**: `search_blm_lands()`, `get_blm_regulations()`
+- **Trail Tools**: `search_trails()`, `get_trail_details()` (supports multiple activity types)
+- **Weather Tools**: `get_weather_forecast()`, `get_trail_conditions()`
+- **Accommodation Tools**: `search_accommodations()`, `get_accommodation_details()`
+- **Transportation Tools**: `find_parking()`, `get_shuttle_info()`
+- **Food Tools**: `find_food_options()`, `find_water_sources()`
+- **Gear Tools**: `search_gear()`, `get_gear_recommendations()`
+- **Web Search**: `WebSearchTool` class using Tavily
+
+## Tool Usage in Agents
+```python
+from agent.tools import search_trails, get_trail_details
+
+# Call tool
+trail_data = search_trails.invoke({
+    "location": "Colorado",
+    "activity_type": "mountain_biking",
+    "source": "mtbproject",
+    "difficulty": "blue"
+})
+
+# Parse JSON response
+trails = json.loads(trail_data)
+```
+
+## Trail Source Mapping
+Activity types map to trail sources:
+- `mountain_biking` → `mtbproject`
+- `hiking` → `hikingproject`
+- `trail_running` → `trailrunproject`
+- `bikepacking` → `mtbproject` (with bikepacking.com as secondary)
+
+## Error Handling
+- Tools should return empty results (empty list/dict) on errors, not raise exceptions
+- Use try/except blocks in tool implementations
+- Return JSON strings for structured data
+
+## Web Search
+Use `WebSearchTool` for Tavily integration:
+```python
+from agent.tools import WebSearchTool
+
+web_search = WebSearchTool(api_key=Config.TAVILY_API_KEY)
+results = web_search.search_web("query string")
+```

@@ -1,0 +1,43 @@
+# State Management
+
+## State Schema
+All state is defined in `src/agent/state.py` using `TypedDict`:
+
+- `AdventureState`: Main graph state
+- `UserPreferences`: User input preferences
+- `AdventurePlan`: Final structured output
+- Supporting types: `Location`, `TrailInfo`, `BLMLandInfo`, `AccommodationInfo`, `GearRecommendation`
+
+## State Access Patterns
+```python
+# Safe access with defaults
+location = state.geo_info.get("location", "") if state.geo_info else ""
+
+# Check optional fields
+if state.user_preferences:
+    activity_type = state.user_preferences.get("activity_type", "mountain_biking")
+
+# List access
+trails = state.trail_info if state.trail_info else []
+```
+
+## State Updates
+- Return only changed fields in node functions
+- Use dict updates for nested structures
+- Always update `completed_agents` list
+- Accumulate errors in `errors` list
+
+## User Preferences
+- Extract from natural language using structured output
+- Support both `activity_type` and `adventure_type` (for backward compatibility)
+- Common fields: `skill_level`, `activity_type`, `duration_days`, `region`, `accommodation_preference`
+
+## Activity Type Handling
+- Primary field: `activity_type` (mountain_biking, hiking, trail_running, bikepacking)
+- Fallback: `adventure_type` (deprecated but supported)
+- Default: `"mountain_biking"` if not specified
+
+## Skill Level Mapping
+Map skill levels to difficulty ratings:
+- Mountain biking: beginner→green, intermediate→blue, advanced→black, expert→double_black
+- Hiking/Trail running: beginner→easy, intermediate→intermediate, advanced→difficult, expert→expert

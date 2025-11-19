@@ -1,0 +1,45 @@
+# Code Style and Standards
+
+## Python Version
+- **Python 3.13+** required
+- Use modern Python features (type hints, async/await, TypedDict)
+
+## Package Management
+- Use **uv** for package management (not pip)
+- Install dependencies: `uv pip install -e .`
+- Install dev dependencies: `uv pip install -e ".[dev]"`
+
+## Code Quality Tools
+- **Ruff**: Linting and formatting (configured in `pyproject.toml`)
+- **MyPy**: Type checking (`mypy src/`)
+- **Pytest**: Testing framework
+
+## Code Style Rules
+1. **Type Hints**: Always use type hints for function parameters and return types
+2. **Docstrings**: Use Google-style docstrings for all classes and functions
+3. **Imports**: Use `from __future__ import annotations` at the top of files
+4. **Async**: Use `async`/`await` for all async operations
+5. **Error Handling**: Wrap external API calls in try/except blocks
+6. **Line Length**: Follow PEP 8 (Ruff will enforce)
+
+## Import Organization
+```python
+from __future__ import annotations
+
+# Standard library
+from typing import Any, Dict, List, Optional
+
+# Third-party
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+
+# Local imports
+from agent.config import Config
+from agent.state import AdventureState
+```
+
+## Naming Conventions
+- **Classes**: PascalCase (e.g., `OrchestratorAgent`)
+- **Functions/Methods**: snake_case (e.g., `analyze_request`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `ACTIVITY_SOURCES`)
+- **Files**: snake_case (e.g., `trail_agent.py`)

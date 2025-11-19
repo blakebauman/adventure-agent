@@ -1,0 +1,66 @@
+# Configuration
+
+## Environment Variables
+Configuration is managed in `src/agent/config.py` using environment variables from `.env`:
+
+### Required
+- `OPENAI_API_KEY`: OpenAI API key (required)
+
+### Optional
+- `OPENAI_MODEL`: Model name (default: `gpt-4o-mini`)
+- `OPENAI_TEMPERATURE`: Temperature (default: `0.7`)
+- `LANGCHAIN_TRACING_V2`: Enable LangSmith tracing (default: `false`)
+- `LANGCHAIN_ENDPOINT`: LangSmith endpoint (default: `https://api.smith.langchain.com`)
+- `LANGCHAIN_API_KEY`: LangSmith API key
+- `LANGCHAIN_PROJECT`: LangSmith project name (default: `adventure-agent`)
+- `TAVILY_API_KEY`: Tavily API key for web search
+- `AFFILIATE_BASE_URL`: Base URL for affiliate links
+- `CHECKPOINTER_TYPE`: Checkpointer type - `memory`, `sqlite`, `postgres`, or `none` (default: `none`)
+- `CHECKPOINTER_DB_URL`: Database URL for sqlite/postgres checkpointers
+
+## Config Class Usage
+```python
+from agent.config import Config
+
+# Access config values
+model = Config.OPENAI_MODEL
+api_key = Config.OPENAI_API_KEY
+
+# Validate configuration
+missing = Config.validate()
+if missing:
+    raise ValueError(f"Missing required config: {missing}")
+```
+
+## LangGraph Configuration
+Configured in `langgraph.json`:
+```json
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/agent/graph.py:graph"
+  },
+  "env": ".env",
+  "image_distro": "wolfi"
+}
+```
+
+## Development Server
+```bash
+# Start dev server
+./run.sh dev
+
+# Custom port
+./run.sh dev --port 8000
+
+# With tunnel
+./run.sh dev-tunnel
+```
+
+## Production Considerations
+- Set all required environment variables
+- Use persistent checkpointer (PostgresSaver) for production
+- Configure rate limiting for external API calls
+- Set up monitoring via LangSmith
+- Use proper error handling and logging
