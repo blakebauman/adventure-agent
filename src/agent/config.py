@@ -29,6 +29,17 @@ class Config:
     # Affiliate
     AFFILIATE_BASE_URL: str = os.getenv("AFFILIATE_BASE_URL", "https://example.com/affiliate")
 
+    # Geocoding API (OpenCage, Nominatim, etc.)
+    OPENCAGE_API_KEY: Optional[str] = os.getenv("OPENCAGE_API_KEY")
+    # Use Nominatim (free, no key) if OPENCAGE_API_KEY not set
+
+    # Weather API
+    OPENWEATHER_API_KEY: Optional[str] = os.getenv("OPENWEATHER_API_KEY")
+    # Falls back to Weather.gov (free, no key) if OPENWEATHER_API_KEY not set
+
+    # Google Places API (for accommodations, restaurants, etc.)
+    GOOGLE_PLACES_API_KEY: Optional[str] = os.getenv("GOOGLE_PLACES_API_KEY")
+
     # Checkpointing
     # Set to "memory", "sqlite", "postgres", or "none" (for LangGraph API)
     # Default is "none" because LangGraph API (langgraph dev) handles checkpointing automatically

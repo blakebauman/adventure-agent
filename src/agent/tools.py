@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Dict, List, Optional
 
 import httpx
 from langchain.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from pydantic import BaseModel, Field
+
+from agent.config import Config
 
 
 class WebSearchTool:
@@ -48,8 +51,109 @@ def search_blm_lands(region: str, activity_type: str = "mountain_biking") -> str
     Returns:
         JSON string with BLM land information
     """
-    # This would integrate with BLM API or web scraping
-    # For now, return structured format
+    try:
+        # Get coordinates for the region
+        coord_result = get_coordinates.invoke({"location_name": region})
+        coord_data = json.loads(coord_result)
+        lat = coord_data.get("coordinates", {}).get("lat")
+        lon = coord_data.get("coordinates", {}).get("lon")
+        
+        if not lat or not lon:
+            raise ValueError("Could not get coordinates for region")
+        
+        # Use Recreation.gov API to find nearby BLM sites
+        # Recreation.gov has some BLM data
+        with httpx.Client() as client:
+            # Search for recreation areas near the location
+            url = "https://ridb.recreation.gov/api/v1/recareas"
+            headers = {"apikey": "public"}  # Public API key
+            params = {
+                "limit": 10,
+                "offset": 0,
+                "latitude": lat,
+                "longitude": lon,
+                "radius": 50,  # 50 mile radius
+            }
+            
+            try:
+                response = client.get(url, headers=headers, params=params, timeout=10.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    rec_areas = data.get("RECDATA", [])
+                    
+                    # Filter for BLM managed areas
+                    blm_lands = []
+                    for area in rec_areas:
+                        org_name = area.get("OrgName", "").upper()
+                        if "BLM" in org_name or "BUREAU OF LAND MANAGEMENT" in org_name:
+                            blm_lands.append({
+                                "name": area.get("RecAreaName", "BLM Land"),
+                                "description": area.get("RecAreaDescription", ""),
+                                "access_points": [area.get("RecAreaDirections", "")],
+                                "regulations": [
+                                    "Follow Leave No Trace principles",
+                                    "Check local BLM office for specific regulations",
+                                ],
+                                "permits_required": area.get("Reservable", False),
+                                "camping_allowed": True,
+                                "coordinates": {
+                                    "lat": area.get("RecAreaLatitude"),
+                                    "lon": area.get("RecAreaLongitude"),
+                                },
+                                "url": f"https://www.recreation.gov/camping/campgrounds/{area.get('RecAreaID')}" if area.get("RecAreaID") else None,
+                            })
+                    
+                    if blm_lands:
+                        return json.dumps({
+                            "lands": blm_lands,
+                            "region": region,
+                            "source": "recreation.gov",
+                        })
+            except Exception as e:
+                print(f"Recreation.gov API error: {e}")
+        
+        # Fallback: Use web search via Tavily if available
+        if Config.TAVILY_API_KEY:
+            try:
+                search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
+                query = f"BLM Bureau of Land Management {region} {activity_type} recreation areas"
+                results = search_tool.search_web(query)
+                
+                if results:
+                    # Extract information from search results
+                    blm_info = []
+                    for result in results[:3]:  # Top 3 results
+                        title = result.get("title", "")
+                        content = result.get("content", "")
+                        url = result.get("url", "")
+                        
+                        if "BLM" in title.upper() or "BUREAU OF LAND MANAGEMENT" in title.upper():
+                            blm_info.append({
+                                "name": title,
+                                "description": content[:200] + "..." if len(content) > 200 else content,
+                                "access_points": ["Contact local BLM office"],
+                                "regulations": [
+                                    "Permits may be required for overnight use",
+                                    "Stay on designated trails",
+                                    "Pack in, pack out",
+                                ],
+                                "permits_required": "overnight" in content.lower(),
+                                "camping_allowed": "camping" in content.lower() or "camp" in content.lower(),
+                                "url": url,
+                            })
+                    
+                    if blm_info:
+                        return json.dumps({
+                            "lands": blm_info,
+                            "region": region,
+                            "source": "web_search",
+                        })
+            except Exception as e:
+                print(f"Web search error for BLM data: {e}")
+    except Exception as e:
+        print(f"BLM land search error for {region}: {e}")
+    
+    # Fallback to structured placeholder data
     return json.dumps({
         "lands": [
             {
@@ -58,9 +162,11 @@ def search_blm_lands(region: str, activity_type: str = "mountain_biking") -> str
                 "regulations": ["Permits required for overnight", "Stay on designated trails"],
                 "permits_required": True,
                 "camping_allowed": True,
-                "description": f"BLM managed land suitable for {activity_type}",
+                "description": f"BLM managed land suitable for {activity_type}. Contact local BLM office for specific information.",
             }
-        ]
+        ],
+        "region": region,
+        "source": "placeholder",
     })
 
 
@@ -95,19 +201,92 @@ def search_trails(
     difficulty: Optional[str] = None,
     distance: Optional[float] = None,
 ) -> str:
-    """Search for trails on Adventure Projects sites (MTB Project, Hiking Project, Trail Run Project).
+    """Search for trails using OpenStreetMap Overpass API.
 
     Args:
         location: Location name or coordinates
         activity_type: Type of activity (mountain_biking, hiking, trail_running, bikepacking)
-        source: Trail source (mtbproject, hikingproject, trailrunproject)
+        source: Trail source (mtbproject, hikingproject, trailrunproject, osm)
         difficulty: Trail difficulty (green/blue/black for MTB, easy/intermediate/difficult for hiking/running)
         distance: Maximum distance in miles
 
     Returns:
         JSON string with trail information
     """
-    # Map activity types to URLs
+    try:
+        # Get coordinates for location
+        coord_result = get_coordinates.invoke({"location_name": location})
+        coord_data = json.loads(coord_result)
+        lat = coord_data.get("coordinates", {}).get("lat")
+        lon = coord_data.get("coordinates", {}).get("lon")
+        
+        if not lat or not lon:
+            raise ValueError("Could not get coordinates for location")
+        
+        # Use OpenStreetMap Overpass API to find trails
+        # Map activity types to OSM tags
+        osm_tags = {
+            "mountain_biking": "mtb",
+            "hiking": "hiking",
+            "trail_running": "running",
+            "bikepacking": "bicycle",
+        }
+        
+        # Build Overpass query - search within ~10km radius
+        overpass_url = "https://overpass-api.de/api/interpreter"
+        
+        # Query for trails/paths near the location
+        query = f"""
+        [out:json][timeout:25];
+        (
+          way["highway"~"^(path|track|footway|bridleway|cycleway)$"]["name"](around:10000,{lat},{lon});
+          relation["route"~"^(hiking|bicycle|mtb|foot)$"]["name"](around:10000,{lat},{lon});
+        );
+        out body;
+        >;
+        out skel qt;
+        """
+        
+        with httpx.Client() as client:
+            response = client.post(overpass_url, data=query, timeout=30.0)
+            response.raise_for_status()
+            data = response.json()
+            
+            trails = []
+            elements = data.get("elements", [])
+            
+            # Process way elements (trail segments)
+            for element in elements[:20]:  # Limit to 20 results
+                if element.get("type") == "way" and element.get("tags"):
+                    tags = element.get("tags", {})
+                    name = tags.get("name", "Unnamed Trail")
+                    
+                    # Filter by activity type if possible
+                    highway = tags.get("highway", "")
+                    if activity_type == "mountain_biking" and highway not in ["path", "track", "cycleway"]:
+                        continue
+                    if activity_type == "hiking" and highway not in ["path", "track", "footway"]:
+                        continue
+                    
+                    trails.append({
+                        "name": name,
+                        "source": "osm",
+                        "activity_type": activity_type,
+                        "difficulty": difficulty or "intermediate",
+                        "length_miles": distance or 5.0,  # OSM doesn't always have length
+                        "elevation_gain": None,
+                        "description": tags.get("description", f"{activity_type.replace('_', ' ').title()} trail"),
+                        "url": f"https://www.openstreetmap.org/way/{element.get('id')}",
+                        "surface": tags.get("surface", "unknown"),
+                        "smoothness": tags.get("smoothness", "unknown"),
+                    })
+            
+            if trails:
+                return json.dumps({"trails": trails})
+    except Exception as e:
+        print(f"Trail search error for {location}: {e}")
+    
+    # Fallback: Map activity types to URLs
     url_map = {
         "mtbproject": "https://www.mtbproject.com",
         "hikingproject": "https://www.hikingproject.com",
@@ -116,8 +295,7 @@ def search_trails(
 
     base_url = url_map.get(source, "https://www.mtbproject.com")
 
-    # This would integrate with Adventure Projects APIs or web scraping
-    # For now, return structured format
+    # Fallback to placeholder data
     return json.dumps({
         "trails": [
             {
@@ -180,12 +358,67 @@ def get_coordinates(location_name: str) -> str:
     Returns:
         JSON string with coordinates
     """
-    # This would use a geocoding service
+    try:
+        # Try OpenCage first if API key is available
+        if Config.OPENCAGE_API_KEY:
+            with httpx.Client() as client:
+                url = "https://api.opencagedata.com/geocode/v1/json"
+                params = {
+                    "q": location_name,
+                    "key": Config.OPENCAGE_API_KEY,
+                    "limit": 1,
+                }
+                response = client.get(url, params=params, timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("results"):
+                    result = data["results"][0]
+                    geometry = result["geometry"]
+                    components = result.get("components", {})
+                    
+                    return json.dumps({
+                        "location": location_name,
+                        "coordinates": {"lat": geometry["lat"], "lon": geometry["lng"]},
+                        "region": components.get("state") or components.get("region") or "Unknown",
+                        "country": components.get("country_code", "US").upper(),
+                        "formatted_address": result.get("formatted", location_name),
+                    })
+        
+        # Fallback to Nominatim (OpenStreetMap, free, no key required)
+        with httpx.Client() as client:
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": location_name,
+                "format": "json",
+                "limit": 1,
+                "addressdetails": 1,
+            }
+            headers = {"User-Agent": "AdventureAgent/1.0"}  # Required by Nominatim
+            response = client.get(url, params=params, headers=headers, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data:
+                result = data[0]
+                return json.dumps({
+                    "location": location_name,
+                    "coordinates": {"lat": float(result["lat"]), "lon": float(result["lon"])},
+                    "region": result.get("address", {}).get("state") or result.get("address", {}).get("region") or "Unknown",
+                    "country": result.get("address", {}).get("country_code", "us").upper(),
+                    "formatted_address": result.get("display_name", location_name),
+                })
+    except Exception as e:
+        # Fallback to placeholder data on error
+        print(f"Geocoding error for {location_name}: {e}")
+    
+    # Fallback placeholder data
     return json.dumps({
         "location": location_name,
         "coordinates": {"lat": 36.1699, "lon": -115.1398},  # Example: Las Vegas
-        "region": "Nevada",
+        "region": "Unknown",
         "country": "US",
+        "formatted_address": location_name,
     })
 
 
@@ -193,7 +426,7 @@ def get_coordinates(location_name: str) -> str:
 def calculate_distance(
     point1: Dict[str, float], point2: Dict[str, float]
 ) -> str:
-    """Calculate distance between two points.
+    """Calculate distance between two points using Haversine formula.
 
     Args:
         point1: First point with lat and lon
@@ -202,11 +435,39 @@ def calculate_distance(
     Returns:
         JSON string with distance information
     """
-    # Simplified distance calculation (would use proper geodetic calculation)
-    return json.dumps({
-        "distance_miles": 25.5,
-        "distance_km": 41.0,
-    })
+    try:
+        lat1, lon1 = point1.get("lat", 0), point1.get("lon", 0)
+        lat2, lon2 = point2.get("lat", 0), point2.get("lon", 0)
+        
+        # Haversine formula for great-circle distance
+        R = 3958.8  # Earth radius in miles
+        
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        
+        a = (
+            math.sin(dlat / 2) ** 2
+            + math.cos(math.radians(lat1))
+            * math.cos(math.radians(lat2))
+            * math.sin(dlon / 2) ** 2
+        )
+        c = 2 * math.asin(math.sqrt(a))
+        distance_miles = R * c
+        distance_km = distance_miles * 1.60934
+        
+        return json.dumps({
+            "distance_miles": round(distance_miles, 2),
+            "distance_km": round(distance_km, 2),
+            "point1": point1,
+            "point2": point2,
+        })
+    except Exception as e:
+        print(f"Distance calculation error: {e}")
+        return json.dumps({
+            "distance_miles": 0.0,
+            "distance_km": 0.0,
+            "error": str(e),
+        })
 
 
 # Accommodation Tools
@@ -228,16 +489,148 @@ def search_accommodations(
     Returns:
         JSON string with accommodation options
     """
+    try:
+        # Get coordinates for location
+        coord_result = get_coordinates.invoke({"location_name": location})
+        coord_data = json.loads(coord_result)
+        lat = coord_data.get("coordinates", {}).get("lat")
+        lon = coord_data.get("coordinates", {}).get("lon")
+        
+        if not lat or not lon:
+            raise ValueError("Could not get coordinates for location")
+        
+        accommodations = []
+        
+        # For campgrounds, use Recreation.gov API (free, no key)
+        if not accommodation_type or accommodation_type.lower() in ["campground", "camping", "campsite"]:
+            try:
+                with httpx.Client() as client:
+                    url = "https://ridb.recreation.gov/api/v1/facilities"
+                    headers = {"apikey": "public"}
+                    params = {
+                        "limit": 10,
+                        "offset": 0,
+                        "latitude": lat,
+                        "longitude": lon,
+                        "radius": 25,  # 25 mile radius
+                        "query": "campground",
+                    }
+                    
+                    response = client.get(url, headers=headers, params=params, timeout=10.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        facilities = data.get("RECDATA", [])
+                        
+                        for facility in facilities[:10]:  # Limit to 10 results
+                            accommodations.append({
+                                "name": facility.get("FacilityName", "Campground"),
+                                "type": "campground",
+                                "location": facility.get("FacilityAddressState", location),
+                                "price_range": "$20-60/night",  # Recreation.gov doesn't always provide pricing
+                                "amenities": [
+                                    "Restrooms",
+                                    "Water",
+                                    "Fire pits",
+                                    "Picnic tables",
+                                ],
+                                "coordinates": {
+                                    "lat": facility.get("FacilityLatitude"),
+                                    "lon": facility.get("FacilityLongitude"),
+                                },
+                                "description": facility.get("FacilityDescription", "")[:200],
+                                "url": f"https://www.recreation.gov/camping/campgrounds/{facility.get('FacilityID')}" if facility.get("FacilityID") else None,
+                                "reservable": facility.get("Reservable", False),
+                            })
+            except Exception as e:
+                print(f"Recreation.gov API error: {e}")
+        
+        # For hotels/hostels, use Google Places API if available
+        if Config.GOOGLE_PLACES_API_KEY and (not accommodation_type or accommodation_type.lower() in ["hotel", "hostel", "lodging"]):
+            try:
+                with httpx.Client() as client:
+                    # First, find nearby places
+                    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+                    params = {
+                        "location": f"{lat},{lon}",
+                        "radius": 10000,  # 10km radius
+                        "type": "lodging",
+                        "key": Config.GOOGLE_PLACES_API_KEY,
+                    }
+                    
+                    response = client.get(url, params=params, timeout=10.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        places = data.get("results", [])
+                        
+                        for place in places[:10]:  # Limit to 10 results
+                            place_id = place.get("place_id")
+                            name = place.get("name", "Accommodation")
+                            rating = place.get("rating")
+                            price_level = place.get("price_level")  # 0-4 scale
+                            
+                            # Get more details
+                            details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+                            details_params = {
+                                "place_id": place_id,
+                                "fields": "name,formatted_address,formatted_phone_number,website,rating,price_level",
+                                "key": Config.GOOGLE_PLACES_API_KEY,
+                            }
+                            
+                            try:
+                                details_response = client.get(details_url, params=details_params, timeout=10.0)
+                                if details_response.status_code == 200:
+                                    details_data = details_response.json().get("result", {})
+                                    
+                                    # Convert price level to range
+                                    price_ranges = {
+                                        0: "$",
+                                        1: "$$",
+                                        2: "$$$",
+                                        3: "$$$$",
+                                        4: "$$$$$",
+                                    }
+                                    price_range = price_ranges.get(price_level, "$$")
+                                    
+                                    accommodations.append({
+                                        "name": details_data.get("name", name),
+                                        "type": "hotel",
+                                        "location": details_data.get("formatted_address", location),
+                                        "price_range": price_range,
+                                        "rating": rating,
+                                        "phone": details_data.get("formatted_phone_number"),
+                                        "website": details_data.get("website"),
+                                        "coordinates": {
+                                            "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                                            "lon": place.get("geometry", {}).get("location", {}).get("lng"),
+                                        },
+                                        "url": f"https://www.google.com/maps/place/?q=place_id:{place_id}",
+                                    })
+                            except Exception as e:
+                                print(f"Google Places details error: {e}")
+            except Exception as e:
+                print(f"Google Places API error: {e}")
+        
+        if accommodations:
+            return json.dumps({
+                "accommodations": accommodations,
+                "location": location,
+                "source": "recreation.gov" if not accommodation_type or accommodation_type.lower() in ["campground", "camping"] else "google_places",
+            })
+    except Exception as e:
+        print(f"Accommodation search error for {location}: {e}")
+    
+    # Fallback to placeholder data
     return json.dumps({
         "accommodations": [
             {
-                "name": f"Campground near {location}",
+                "name": f"{accommodation_type or 'Campground'} near {location}",
                 "type": accommodation_type or "campground",
                 "location": location,
                 "price_range": "$20-40/night",
                 "amenities": ["Restrooms", "Water", "Fire pits"],
             }
-        ]
+        ],
+        "source": "placeholder",
     })
 
 
@@ -599,6 +992,124 @@ def get_weather_forecast(location: str, dates: Optional[List[str]] = None) -> st
     Returns:
         JSON string with weather forecast
     """
+    try:
+        # First, get coordinates if location is a name
+        lat, lon = None, None
+        if isinstance(location, str):
+            # Check if it's coordinates in string format "lat,lon"
+            try:
+                parts = location.split(",")
+                if len(parts) == 2:
+                    lat, lon = float(parts[0].strip()), float(parts[1].strip())
+            except (ValueError, AttributeError):
+                # Not coordinates, treat as location name - call get_coordinates tool
+                coord_result = get_coordinates.invoke({"location_name": location})
+                coord_data = json.loads(coord_result)
+                lat = coord_data.get("coordinates", {}).get("lat")
+                lon = coord_data.get("coordinates", {}).get("lon")
+        elif isinstance(location, dict):
+            lat, lon = location.get("lat"), location.get("lon")
+        
+        # Try OpenWeatherMap first if API key is available
+        if Config.OPENWEATHER_API_KEY and lat and lon:
+            with httpx.Client() as client:
+                url = "https://api.openweathermap.org/data/2.5/forecast"
+                params = {
+                    "lat": lat,
+                    "lon": lon,
+                    "appid": Config.OPENWEATHER_API_KEY,
+                    "units": "imperial",
+                }
+                response = client.get(url, params=params, timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Process current weather
+                current = data.get("list", [{}])[0] if data.get("list") else {}
+                current_main = current.get("main", {})
+                current_weather = current.get("weather", [{}])[0]
+                
+                forecast_data = {
+                    "current": {
+                        "temp": round(current_main.get("temp", 0)),
+                        "feels_like": round(current_main.get("feels_like", 0)),
+                        "condition": current_weather.get("description", "Unknown"),
+                        "wind": f"{current.get('wind', {}).get('speed', 0):.1f} mph",
+                        "humidity": current_main.get("humidity", 0),
+                    },
+                    "daily": [],
+                    "source": "OpenWeatherMap",
+                }
+                
+                # Process daily forecasts
+                if dates:
+                    for date in dates:
+                        # Find closest forecast for this date
+                        for item in data.get("list", []):
+                            if date in item.get("dt_txt", ""):
+                                main = item.get("main", {})
+                                weather = item.get("weather", [{}])[0]
+                                forecast_data["daily"].append({
+                                    "date": date,
+                                    "high": round(main.get("temp_max", 0)),
+                                    "low": round(main.get("temp_min", 0)),
+                                    "condition": weather.get("description", "Unknown"),
+                                    "precipitation": item.get("rain", {}).get("3h", 0),
+                                })
+                                break
+                
+                return json.dumps({
+                    "location": location,
+                    "forecast": forecast_data,
+                })
+        
+        # Fallback to Weather.gov for US locations (free, no key)
+        if lat and lon:
+            try:
+                with httpx.Client() as client:
+                    # Get grid point from lat/lon
+                    points_url = f"https://api.weather.gov/points/{lat},{lon}"
+                    headers = {"User-Agent": "AdventureAgent/1.0"}
+                    response = client.get(points_url, headers=headers, timeout=10.0)
+                    response.raise_for_status()
+                    points_data = response.json()
+                    
+                    forecast_url = points_data.get("properties", {}).get("forecast")
+                    if forecast_url:
+                        response = client.get(forecast_url, headers=headers, timeout=10.0)
+                        response.raise_for_status()
+                        forecast_data = response.json()
+                        
+                        periods = forecast_data.get("properties", {}).get("periods", [])
+                        if periods:
+                            current = periods[0]
+                            return json.dumps({
+                                "location": location,
+                                "forecast": {
+                                    "current": {
+                                        "temp": current.get("temperature", 0),
+                                        "condition": current.get("shortForecast", "Unknown"),
+                                        "wind": current.get("windSpeed", "Unknown"),
+                                    },
+                                    "daily": [
+                                        {
+                                            "date": p.get("startTime", "")[:10],
+                                            "high": p.get("temperature", 0),
+                                            "low": p.get("temperature", 0),  # Weather.gov doesn't always separate
+                                            "condition": p.get("shortForecast", "Unknown"),
+                                            "precipitation": 0,
+                                        }
+                                        for p in periods[:7]  # Next 7 periods
+                                    ],
+                                },
+                                "source": "National Weather Service",
+                            })
+            except Exception as e:
+                print(f"Weather.gov error: {e}")
+    except Exception as e:
+        print(f"Weather forecast error for {location}: {e}")
+    
+    # Fallback placeholder data
     return json.dumps({
         "location": location,
         "forecast": {
@@ -608,7 +1119,7 @@ def get_weather_forecast(location: str, dates: Optional[List[str]] = None) -> st
                 for date in (dates or [])
             ],
         },
-        "source": "National Weather Service",
+        "source": "Placeholder",
     })
 
 

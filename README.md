@@ -31,7 +31,7 @@ An intelligent adventure planning agent built with LangChain, LangGraph, and Lan
   - **Gear Agent**: Recommends gear and products with affiliate links (revenue model)
   - **Photography Agent**: Best photo spots, scenic viewpoints, and media resources
 - **Human-in-the-Loop**: Checkpoints for review and approval
-- **API Access**: RESTful API exposed via LangGraph Cloud
+- **API Access**: RESTful API exposed via LangGraph CLI (development) or LangSmith (production)
 
 ## Prerequisites
 
@@ -107,8 +107,10 @@ Or use the run script:
 ```
 
 This will:
-- Start the API server on `http://127.0.0.1:8123` (default port)
+- Start the API server on `http://localhost:2024` (default port)
 - Enable hot reloading when code changes are detected
+- Expose REST API endpoints for threads, runs, and assistants
+- Provide OpenAPI documentation at `/docs`
 - Connect to LangGraph Studio for visualization and debugging
 
 ### Available Commands
@@ -183,6 +185,15 @@ LANGCHAIN_PROJECT=adventure-agent
 
 # Tavily API Key (optional, for web search)
 TAVILY_API_KEY=your_tavily_api_key_here
+
+# Geocoding API (optional, falls back to free Nominatim if not set)
+OPENCAGE_API_KEY=your_opencage_api_key_here
+
+# Weather API (optional, falls back to free Weather.gov for US locations)
+OPENWEATHER_API_KEY=your_openweather_api_key_here
+
+# Google Places API (optional, for accommodation and restaurant search)
+GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 
 # Affiliate Partner URLs (for gear recommendations)
 AFFILIATE_BASE_URL=https://example.com/affiliate
@@ -302,24 +313,63 @@ The system includes checkpoints for human review when:
 
 Once the server is running, you can interact with the agent via the LangGraph API. The system supports **text-to-adventure generation** - you can provide natural language descriptions and the AI will understand and generate a complete adventure plan.
 
-### Text-to-Adventure Example (Natural Language Only)
+> **📚 For complete API documentation, see [docs/API_DEPLOYMENT.md](docs/API_DEPLOYMENT.md)**
 
-The simplest way to use the system is with just natural language text. The orchestrator uses LLM analysis to understand your request:
+### Using the Python Client (Recommended)
+
+The easiest way to interact with the API is using the provided Python client:
+
+```python
+from agent.api_client import AdventureAgentClient
+
+# Initialize client
+client = AdventureAgentClient(base_url="http://localhost:2024")
+
+# Create a thread
+thread_id = client.create_thread(user_id="user123", session_id="session456")
+
+# Create an adventure plan from natural language
+run = client.create_adventure_plan(
+    thread_id,
+    "I want to plan a 3-day mountain bike trip in Colorado for intermediate riders. I prefer camping and want to explore some challenging trails with great views."
+)
+
+# Wait for completion
+state = client.wait_for_completion(thread_id, run["run_id"])
+adventure_plan = state["adventure_plan"]
+print(f"Plan: {adventure_plan['title']}")
+```
+
+### Simple One-Line Usage
+
+For quick testing, use the convenience function:
+
+```python
+from agent.api_client import create_adventure_plan_simple
+
+plan = create_adventure_plan_simple(
+    "Plan a 3-day mountain bike trip in Colorado"
+)
+print(plan["adventure_plan"]["title"])
+```
+
+### Direct REST API Usage
+
+You can also use the REST API directly with `requests` or any HTTP client:
 
 ```python
 import requests
 
 # Start a new thread
 response = requests.post(
-    "http://127.0.0.1:8123/threads",
+    "http://localhost:2024/threads",
     json={"config": {"configurable": {"user_id": "user123", "session_id": "session456"}}}
 )
 thread_id = response.json()["thread_id"]
 
 # Submit a natural language adventure request
-# The AI will automatically extract preferences, activity type, location, etc.
 response = requests.post(
-    f"http://127.0.0.1:8123/threads/{thread_id}/runs",
+    f"http://localhost:2024/threads/{thread_id}/runs",
     json={
         "assistant_id": "agent",
         "input": {
@@ -330,7 +380,7 @@ response = requests.post(
 
 # Get the result
 run_id = response.json()["run_id"]
-result = requests.get(f"http://127.0.0.1:8123/threads/{thread_id}/runs/{run_id}/state")
+result = requests.get(f"http://localhost:2024/threads/{thread_id}/runs/{run_id}/state")
 adventure_plan = result.json()["values"]["adventure_plan"]
 ```
 
@@ -339,37 +389,25 @@ adventure_plan = result.json()["values"]["adventure_plan"]
 You can also provide structured preferences alongside or instead of natural language:
 
 ```python
-import requests
+from agent.api_client import AdventureAgentClient
 
-# Start a new thread
-response = requests.post(
-    "http://127.0.0.1:8123/threads",
-    json={"config": {"configurable": {"user_id": "user123", "session_id": "session456"}}}
-)
-thread_id = response.json()["thread_id"]
+client = AdventureAgentClient()
+thread_id = client.create_thread()
 
-# Submit an adventure planning request with structured preferences
-response = requests.post(
-    f"http://127.0.0.1:8123/threads/{thread_id}/runs",
-    json={
-        "assistant_id": "agent",
-        "input": {
-            "user_input": "Plan a 3-day mountain bike adventure in Colorado",
-            "user_preferences": {
-                "skill_level": "intermediate",
-                "activity_type": "mountain_biking",
-                "duration_days": 3,
-                "region": "Colorado",
-                "accommodation_preference": "camping"
-            }
-        }
+run = client.create_adventure_plan(
+    thread_id,
+    "Plan a 3-day mountain bike adventure in Colorado",
+    user_preferences={
+        "skill_level": "intermediate",
+        "activity_type": "mountain_biking",
+        "duration_days": 3,
+        "region": "Colorado",
+        "accommodation_preference": "camping"
     }
 )
 
-# Get the result
-run_id = response.json()["run_id"]
-result = requests.get(f"http://127.0.0.1:8123/threads/{thread_id}/runs/{run_id}/state")
-adventure_plan = result.json()["values"]["adventure_plan"]
+state = client.wait_for_completion(thread_id, run["run_id"])
+adventure_plan = state["adventure_plan"]
 ```
 
 ### How Text-to-Adventure Works
@@ -502,10 +540,49 @@ For production deployment, consider:
 
 See `docs/BEST_PRACTICES.md` for detailed best practices and compliance information.
 
+## API Integrations
+
+The adventure agent uses real API integrations with fallbacks:
+
+### Geocoding
+- **Primary**: OpenCage Geocoding API (if `OPENCAGE_API_KEY` is set)
+- **Fallback**: Nominatim (OpenStreetMap) - free, no key required
+- **Used by**: `get_coordinates` tool
+
+### Weather
+- **Primary**: OpenWeatherMap API (if `OPENWEATHER_API_KEY` is set)
+- **Fallback**: Weather.gov API (free, no key, US locations only)
+- **Used by**: `get_weather_forecast` tool
+
+### Trail Data
+- **Primary**: OpenStreetMap Overpass API (free, no key required)
+- **Fallback**: Placeholder data
+- **Used by**: `search_trails` tool
+- **Note**: Adventure Projects (MTB Project, Hiking Project, Trail Run Project) don't have public APIs, so we use OpenStreetMap data
+
+### Distance Calculation
+- **Implementation**: Haversine formula (great-circle distance)
+- **Used by**: `calculate_distance` tool
+
+### BLM Land Data
+- **Primary**: Recreation.gov API (free, no key required)
+- **Fallback**: Web search via Tavily (if API key available)
+- **Used by**: `search_blm_lands` tool
+- **Note**: Searches for Bureau of Land Management recreation areas
+
+### Accommodations
+- **Campgrounds**: Recreation.gov API (free, no key required)
+- **Hotels/Lodging**: Google Places API (if `GOOGLE_PLACES_API_KEY` is set)
+- **Fallback**: Placeholder data
+- **Used by**: `search_accommodations` tool
+
+All tools include error handling and fallback to placeholder data if APIs fail, ensuring the system continues to function even when external services are unavailable.
+
 ## Additional Documentation
 
 - **docs/AGENT_RECOMMENDATIONS.md**: Agent implementation status and available resources
 - **docs/BEST_PRACTICES.md**: LangChain/LangGraph best practices compliance
+- **docs/TRAIL_DATA_SOURCES.md**: Detailed information on trail data sources and integration methods
 
 ## Contributing
 
