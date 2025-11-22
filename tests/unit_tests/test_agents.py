@@ -93,7 +93,7 @@ class TestTrailAgent:
     @pytest.mark.anyio
     async def test_search_trails_error_handling(self):
         """Test error handling in trail search."""
-        with patch('agent.agents.trail_agent.search_trails') as mock_search:
+        with patch('agent.tools.search_trails') as mock_search:
             mock_search.invoke.side_effect = Exception("API Error")
             
             agent = TrailAgent()
@@ -172,7 +172,7 @@ class TestGeoAgent:
     @pytest.mark.anyio
     async def test_get_location_info_error_handling(self):
         """Test error handling in location info."""
-        with patch('agent.agents.geo_agent.get_coordinates') as mock_coords:
+        with patch('agent.tools.get_coordinates') as mock_coords:
             mock_coords.invoke.side_effect = Exception("API Error")
             
             agent = GeoAgent()
@@ -242,7 +242,7 @@ class TestWeatherAgent:
     @pytest.mark.anyio
     async def test_get_weather_info_error_handling(self):
         """Test error handling in weather info."""
-        with patch('agent.agents.weather_agent.get_weather_forecast') as mock_forecast:
+        with patch('agent.tools.get_weather_forecast') as mock_forecast:
             mock_forecast.invoke.side_effect = Exception("API Error")
             
             agent = WeatherAgent()
@@ -281,7 +281,7 @@ class TestOrchestratorAgent:
         
         analysis = await agent.analyze_request(
             user_input="Plan a mountain biking trip to Colorado",
-            user_preferences=None,
+            preferences=None,
         )
         
         assert analysis["activity_type"] == "mountain_biking"
@@ -305,7 +305,7 @@ class TestOrchestratorAgent:
         
         analysis = await agent.analyze_request(
             user_input="Plan a trip",
-            user_preferences=prefs,
+            preferences=prefs,
         )
         
         assert analysis["activity_type"] == "mountain_biking"

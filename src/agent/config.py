@@ -35,6 +35,13 @@ class Config:
     CHECKPOINTER_TYPE: str = os.getenv("CHECKPOINTER_TYPE", "none")
     CHECKPOINTER_DB_URL: Optional[str] = os.getenv("CHECKPOINTER_DB_URL")
 
+    # Data Archiving
+    # Set to "sqlite", "json", or "none" to disable archiving
+    # Default is "json" for simple file-based archiving
+    ARCHIVE_TYPE: Optional[str] = os.getenv("ARCHIVE_TYPE", "json")
+    ARCHIVE_DB_PATH: Optional[str] = os.getenv("ARCHIVE_DB_PATH")  # For SQLite backend
+    ARCHIVE_DIR: Optional[str] = os.getenv("ARCHIVE_DIR", "adventure_archive")  # For JSON backend
+
     @classmethod
     def validate(cls) -> list[str]:
         """Validate configuration and return list of missing required fields."""

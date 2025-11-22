@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import operator
+from typing import Annotated, Any, Dict, List, Optional
 
 from typing_extensions import TypedDict
 
@@ -114,7 +115,9 @@ class AdventureState(TypedDict, total=False):
     # Context from orchestrator
     current_task: str
     required_agents: List[str]
-    completed_agents: List[str]
+    # Use operator.add as reducer to merge lists from parallel nodes
+    # Each agent returns ["agent_name"] and they get concatenated
+    completed_agents: Annotated[List[str], operator.add]
     agent_context: Dict[str, str]
 
     # Agent outputs

@@ -30,13 +30,22 @@ class TestConfig:
 
     def test_validate_missing_api_key(self):
         """Test validation with missing API key."""
-        with patch.dict(os.environ, {}, clear=True):
+        # Temporarily unset OPENAI_API_KEY if it exists
+        original_key = os.environ.pop("OPENAI_API_KEY", None)
+        try:
             from importlib import reload
             import agent.config
+            # Force reload to pick up the cleared environment
             reload(agent.config)
             from agent.config import Config as ReloadedConfig
+            # Clear the cached value
+            ReloadedConfig.OPENAI_API_KEY = None
             missing = ReloadedConfig.validate()
             assert "OPENAI_API_KEY" in missing
+        finally:
+            # Restore original key if it existed
+            if original_key:
+                os.environ["OPENAI_API_KEY"] = original_key
 
     def test_validate_with_api_key(self):
         """Test validation with API key present."""

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.anyio
 async def test_agent_simple_passthrough() -> None:
     """Test simple graph passthrough."""
     inputs = {"user_input": "Plan a trip to Colorado"}
-    res = await graph.graph.ainvoke(inputs)
+    res = await graph.ainvoke(inputs)
     assert res is not None
 
 
@@ -59,7 +59,7 @@ async def test_graph_with_user_preferences() -> None:
             "source": "mtbproject",
         }])
         
-        res = await graph.graph.ainvoke(inputs)
+        res = await graph.ainvoke(inputs)
         
         assert res is not None
         assert "adventure_plan" in res or "required_agents" in res
@@ -76,7 +76,7 @@ async def test_graph_error_handling() -> None:
     with patch('agent.graph.orchestrator') as mock_orch:
         mock_orch.analyze_request = AsyncMock(side_effect=Exception("Test error"))
         
-        res = await graph.graph.ainvoke(inputs)
+        res = await graph.ainvoke(inputs)
         
         # Graph should handle errors gracefully
         assert res is not None
@@ -114,7 +114,7 @@ async def test_graph_routing_logic() -> None:
         mock_weather.get_weather_info = AsyncMock(return_value={"forecast": "Sunny"})
         mock_trail.search_trails = AsyncMock(return_value=[])
         
-        res = await graph.graph.ainvoke(inputs)
+        res = await graph.ainvoke(inputs)
         
         # Verify agents were called in priority order
         # Geo should be called first

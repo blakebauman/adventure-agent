@@ -63,3 +63,9 @@ dev = [
     "pytest>=8.3.5",
     "ruff>=0.8.2",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (requires dev server to be running)",
+    "langsmith: marks tests that require LangSmith tracing to be enabled",
+]

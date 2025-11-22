@@ -31,15 +31,10 @@ This document outlines the current status of agents in the adventure planning se
 - **Gear Agent**: Product recommendations with affiliate links
 - **Photography Agent**: Best photo spots, scenic viewpoints, and media resources
 
-## Agents Not Currently in Graph
-
-The following agents are implemented as classes but are not currently wired into the graph workflow:
-
-- **Route Planning Agent**: RideWithGPS, Strava (exists but not in graph)
-- **Bikepacking Agent**: Bikepacking.com, Bikepacking Roots (exists but not in graph)
-- **Advocacy Agent**: IMBA, Adventure Cycling Association (exists but not in graph)
-
-These agents can be added to the graph in `src/agent/graph.py` if needed.
+### Route Planning & Specialized Routes
+- **Route Planning Agent**: RideWithGPS, Strava (active in graph)
+- **Bikepacking Agent**: Bikepacking.com, Bikepacking Roots (active in graph)
+- **Advocacy Agent**: IMBA, Adventure Cycling Association (active in graph)
 
 ## Additional Data Sources
 

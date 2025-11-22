@@ -12,3 +12,8 @@ wheels/
 
 # LangGraph API runtime files
 .langgraph_api/
+
+
+.DS_Store
+
+adventure_archive/

@@ -65,7 +65,7 @@ class TestAgentIntegration:
             
             result = await orchestrator.analyze_request(
                 user_input="Plan a mountain biking trip to Colorado",
-                user_preferences=None,
+                preferences=None,
             )
             
             assert result["activity_type"] == "mountain_biking"

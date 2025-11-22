@@ -32,6 +32,11 @@ Adventure Agent is an intelligent adventure planning system built with LangChain
 - `ruff check .` - Direct ruff command
 - `mypy src/` - Direct MyPy command
 
+### Important Development Notes
+- **ALWAYS run lint and typecheck after making changes** - Use `./run.sh lint` and `./run.sh typecheck` before committing
+- **Use uv for package management** - Never use pip directly, always use `uv pip install`
+- **Environment variables** - See Environment Setup section for required API keys
+
 ### Build & Deploy
 - `./run.sh build` - Build Docker image via LangGraph
 - `./run.sh clean` - Clean build artifacts
@@ -67,6 +72,8 @@ The system uses a **hub-and-spoke architecture** with an Orchestrator agent mana
 - Environment-based configuration with .env support
 - Checkpointer configuration (memory/sqlite/postgres/none)
 - OpenAI, LangSmith, Tavily API settings
+- Default model: `gpt-4o-mini` (configurable via OPENAI_MODEL)
+- Temperature: 0.7 (configurable via OPENAI_TEMPERATURE)
 
 **Tools** (`src/agent/tools.py`):
 - 60+ tools for external integrations
@@ -98,8 +105,9 @@ The system supports **natural language input processing**:
 ### Testing Strategy
 - **Unit tests** (`tests/unit_tests/`) - Individual agent and component testing
 - **Integration tests** (`tests/integration_tests/`) - Full graph execution testing
-- Use pytest with fixtures for agent testing
+- Use pytest with fixtures for agent testing (`tests/conftest.py` configures asyncio backend)
 - Mock external APIs for consistent testing
+- Dev dependencies include pytest 8.3.5+ with anyio backend support
 
 ### Key Dependencies
 - **LangGraph** - Multi-agent orchestration and state management
@@ -124,6 +132,9 @@ CHECKPOINTER_TYPE=memory         # memory/sqlite/postgres/none
 
 - Main graph entry point: `src/agent/graph.py:graph`
 - Default model: `gpt-4o-mini` (configurable via OPENAI_MODEL)
-- Use uv for package management (not pip)
+- Use uv for package management (not pip) - **Never use pip directly**
 - LangGraph API handles checkpointing automatically when deployed
 - Human-in-the-loop interrupts for plan review/approval
+- Graph uses priority-based agent execution with conditional routing
+- Retry policies implemented for external API calls (3 retries with exponential backoff)
+- All agent nodes have error handling and graceful fallbacks
