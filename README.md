@@ -1,12 +1,16 @@
-# Adventure Agent
+# Arizona Adventure Agentic Workflow
 
-An intelligent adventure planning agent built with LangChain, LangGraph, and LangSmith. This system helps plan mountain bike adventures, bikepacking trips, and outdoor adventures. We're starting with the United States and Canada and plan to add more regions in the near future.
+An intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. **Specializing in Arizona adventures** - from Sedona's red rock trails to Jerome's historic mining town, from Flagstaff's mountain peaks to Tucson's Sonoran Desert.
+
+Built by Arizonans, for Arizonans, and anyone who loves exploring the Grand Canyon State.
 
 ## Features
 
-- **Text-to-Adventure AI Generation**: Natural language input processing - simply describe your adventure in plain text and the AI generates a complete plan
-- **Multi-Agent Architecture**: 17 specialized agents plus orchestrator for comprehensive adventure planning
-- **Orchestrator Agent**: Intelligently routes requests to appropriate specialized agents using LLM analysis
+- **Arizona-First Design**: Specializes in Arizona adventures with location-specific agents for cities and towns
+- **Text-to-Adventure AI Generation**: Natural language input processing - simply describe your Arizona adventure in plain text and the AI generates a complete plan
+- **Multi-Agent Architecture**: 17+ specialized agents plus location-specific agents for Arizona cities/towns
+- **Location Agents**: Specialized agents for Jerome, Sedona, Prescott, and more Arizona destinations
+- **Orchestrator Agent**: Intelligently routes requests to appropriate specialized agents using LLM analysis, automatically detects Arizona locations
 - **Core Planning Agents**:
   - **Geographic Agent**: Location data, coordinates, and geographic information
   - **Trail Agent**: Expert on trails for multiple activity types:
@@ -170,34 +174,44 @@ The agent is configured in `langgraph.json`. The main graph is defined in `src/a
 Create a `.env` file in the project root for environment-specific configuration:
 
 ```bash
-# OpenAI API Key (required for LLM functionality)
+# Copy the template file
+cp env.template .env
+
+# Then edit .env with your actual API keys
+```
+
+**Quick Start - Minimum Required:**
+```bash
+# At minimum, you need at least one LLM provider API key
 OPENAI_API_KEY=your_openai_api_key_here
 
-# OpenAI Model Configuration (optional)
-OPENAI_MODEL=gpt-4o-mini  # Default model
-OPENAI_TEMPERATURE=0.7     # Default temperature
-
-# LangSmith Configuration (optional, for observability)
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=your_langsmith_api_key_here
-LANGCHAIN_PROJECT=adventure-agent
-
-# Tavily API Key (optional, for web search)
-TAVILY_API_KEY=your_tavily_api_key_here
-
-# Geocoding API (optional, falls back to free Nominatim if not set)
-OPENCAGE_API_KEY=your_opencage_api_key_here
-
-# Weather API (optional, falls back to free Weather.gov for US locations)
-OPENWEATHER_API_KEY=your_openweather_api_key_here
-
-# Google Places API (optional, for accommodation and restaurant search)
-GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
-
-# Affiliate Partner URLs (for gear recommendations)
-AFFILIATE_BASE_URL=https://example.com/affiliate
+# Required if using Anthropic models (Claude)
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 ```
+
+**Full Configuration:**
+See [`env.template`](env.template) for a complete list of all available environment variables, including:
+
+- **LLM Configuration**: OpenAI and Anthropic API keys, default models, temperature
+- **Per-Agent Model Assignments**: Override models for specific agents (e.g., `AGENT_MODEL_ORCHESTRATOR=claude-sonnet-3.5`)
+- **LangSmith**: Observability and tracing configuration
+- **External APIs**: Tavily, OpenCage, OpenWeather, Google Places, Recreation.gov
+- **System Configuration**: Checkpointing, caching, rate limiting, archiving
+
+**Per-Agent Model Configuration:**
+The system supports assigning specific LLM models to each agent for cost optimization and performance tuning. By default:
+- **High-complexity agents** (orchestrator, planning, synthesis): Use `claude-sonnet-3.5`
+- **Medium-complexity agents** (trail, route planning, location agents): Use `claude-haiku-3`
+- **Low-complexity agents** (geo, weather, accommodation, etc.): Use `claude-haiku-3`
+
+Override defaults via environment variables:
+```bash
+AGENT_MODEL_ORCHESTRATOR=claude-sonnet-3.5
+AGENT_MODEL_TRAIL=claude-haiku-3
+AGENT_MODEL_GEO=gpt-4o-mini
+```
+
+See [`docs/PER_AGENT_MODEL_ASSIGNMENT.md`](docs/PER_AGENT_MODEL_ASSIGNMENT.md) for detailed model assignment strategy.
 
 ## Supported Activity Types
 
@@ -537,6 +551,8 @@ For production deployment, consider:
 3. **Rate Limiting**: Implement rate limiting for external API calls
 4. **Error Handling**: Monitor and handle errors gracefully
 5. **Logging**: Configure comprehensive logging and monitoring via LangSmith
+
+> **📚 For complete deployment instructions, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
 See `docs/BEST_PRACTICES.md` for detailed best practices and compliance information.
 

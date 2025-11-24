@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
-    get_parking_information,
-    find_shuttle_services,
-    get_public_transportation,
     find_bike_transport_options,
+    find_shuttle_services,
     get_car_rental_recommendations,
+    get_parking_information,
+    get_public_transportation,
 )
+from agent.utils import invoke_tool_async
 
 
 class TransportationAgent:
@@ -23,10 +24,10 @@ class TransportationAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Transportation agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="transportation",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on transportation and logistics for outdoor adventures.
@@ -45,8 +46,8 @@ Provide accurate, detailed transportation information to help adventurers plan t
     async def get_transportation_info(
         self,
         location: str,
-        trailhead: Optional[str] = None,
-        route_type: Optional[str] = None,
+        trailhead: str | None = None,
+        route_type: str | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive transportation and logistics information.
@@ -60,33 +61,48 @@ Provide accurate, detailed transportation information to help adventurers plan t
         Returns:
             Dictionary with transportation information
         """
-        # Get parking information
-        parking = get_parking_information.invoke({
-            "location": location,
-            "trailhead": trailhead,
-        })
+        # Get parking information - wrap in thread to avoid blocking
+        parking = await invoke_tool_async(
+            get_parking_information,
+            {
+                "location": location,
+                "trailhead": trailhead,
+            }
+        )
 
         # Find shuttle services
-        shuttles = find_shuttle_services.invoke({
-            "location": location,
-            "route_type": route_type,
-        })
+        shuttles = await invoke_tool_async(
+            find_shuttle_services,
+            {
+                "location": location,
+                "route_type": route_type,
+            }
+        )
 
         # Get public transportation
-        public_transit = get_public_transportation.invoke({
-            "location": location,
-            "trailhead": trailhead,
-        })
+        public_transit = await invoke_tool_async(
+            get_public_transportation,
+            {
+                "location": location,
+                "trailhead": trailhead,
+            }
+        )
 
         # Find bike transport options
-        bike_transport = find_bike_transport_options.invoke({
-            "location": location,
-        })
+        bike_transport = await invoke_tool_async(
+            find_bike_transport_options,
+            {
+                "location": location,
+            }
+        )
 
         # Get car rental recommendations
-        car_rentals = get_car_rental_recommendations.invoke({
-            "location": location,
-        })
+        car_rentals = await invoke_tool_async(
+            get_car_rental_recommendations,
+            {
+                "location": location,
+            }
+        )
 
         try:
             parking_data = (

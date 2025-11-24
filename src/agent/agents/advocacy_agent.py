@@ -5,15 +5,16 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
-    search_imba_trails,
-    search_adventure_cycling_routes,
     get_trail_access_info,
+    search_adventure_cycling_routes,
+    search_imba_trails,
 )
+from agent.utils import invoke_tool_async
 
 
 class AdvocacyAgent:
@@ -34,10 +35,10 @@ class AdvocacyAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Advocacy agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="advocacy",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert in trail advocacy, access, and long-distance cycling routes.
@@ -55,7 +56,10 @@ Provide detailed information about trail access, advocacy, and long-distance rou
         self, location: str, context: str = ""
     ) -> Dict[str, Any]:
         """Get IMBA trail network information for a location."""
-        trail_data = search_imba_trails.invoke({"location": location})
+        trail_data = await invoke_tool_async(
+            search_imba_trails,
+            {"location": location}
+        )
 
         try:
             data = json.loads(trail_data) if isinstance(trail_data, str) else trail_data
@@ -112,10 +116,13 @@ Return enhanced information in JSON format.""",
         self, location: str, route_type: str | None = None, context: str = ""
     ) -> List[Dict[str, Any]]:
         """Search for Adventure Cycling Association routes."""
-        route_data = search_adventure_cycling_routes.invoke({
-            "location": location,
-            "route_type": route_type,
-        })
+        route_data = await invoke_tool_async(
+            search_adventure_cycling_routes,
+            {
+                "location": location,
+                "route_type": route_type,
+            }
+        )
 
         try:
             data = json.loads(route_data) if isinstance(route_data, str) else route_data
@@ -173,7 +180,10 @@ Return enhanced information in JSON format.""",
 
     async def get_trail_access_info(self, location: str) -> Dict[str, Any]:
         """Get trail access and advocacy information."""
-        access_data = get_trail_access_info.invoke({"location": location})
+        access_data = await invoke_tool_async(
+            get_trail_access_info,
+            {"location": location}
+        )
         try:
             return (
                 json.loads(access_data)

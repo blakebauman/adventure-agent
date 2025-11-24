@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
     find_photo_spots,
     find_scenic_viewpoints,
-    get_sunrise_sunset_locations,
     get_photography_tips,
+    get_sunrise_sunset_locations,
 )
 
 
@@ -22,10 +22,10 @@ class PhotographyAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Photography agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="photography",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on photography and media for outdoor adventures.
@@ -44,7 +44,7 @@ Provide accurate, detailed photography information to help adventurers capture t
     async def get_photography_info(
         self,
         location: str,
-        route_info: Optional[Dict[str, Any]] = None,
+        route_info: Dict[str, Any] | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive photography and media information.

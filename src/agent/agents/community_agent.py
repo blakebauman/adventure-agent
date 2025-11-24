@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
+    find_group_rides,
     find_local_clubs,
     find_meetup_groups,
     find_upcoming_events,
-    find_group_rides,
     find_volunteer_opportunities,
 )
 
@@ -23,10 +23,10 @@ class CommunityAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Community agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="community",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on community and social resources for outdoor adventures.

@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
-    get_emergency_contacts,
-    get_safety_information,
+    assess_route_safety,
     check_wildlife_alerts,
     get_avalanche_forecast,
+    get_emergency_contacts,
     get_river_conditions,
-    assess_route_safety,
+    get_safety_information,
 )
+from agent.utils import invoke_tool_async
 
 
 class SafetyAgent:
@@ -24,10 +25,10 @@ class SafetyAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Safety agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="safety",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on safety and emergency preparedness for outdoor adventures.
@@ -50,7 +51,7 @@ Always prioritize safety and risk mitigation."""
         self,
         location: str,
         activity_type: str = "mountain_biking",
-        route_info: Optional[Dict[str, Any]] = None,
+        route_info: Dict[str, Any] | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive safety and emergency information.
@@ -64,42 +65,60 @@ Always prioritize safety and risk mitigation."""
         Returns:
             Dictionary with safety and emergency information
         """
-        # Get emergency contacts
-        emergency_contacts = get_emergency_contacts.invoke({
-            "location": location,
-        })
+        # Get emergency contacts - wrap in thread to avoid blocking
+        emergency_contacts = await invoke_tool_async(
+            get_emergency_contacts,
+            {
+                "location": location,
+            }
+        )
 
         # Get safety information
-        safety_info = get_safety_information.invoke({
-            "location": location,
-            "activity_type": activity_type,
-        })
+        safety_info = await invoke_tool_async(
+            get_safety_information,
+            {
+                "location": location,
+                "activity_type": activity_type,
+            }
+        )
 
         # Check wildlife alerts
-        wildlife_alerts = check_wildlife_alerts.invoke({
-            "location": location,
-        })
+        wildlife_alerts = await invoke_tool_async(
+            check_wildlife_alerts,
+            {
+                "location": location,
+            }
+        )
 
         # Get avalanche forecast (if applicable)
         avalanche_forecast = {}
         if activity_type in ["skiing", "snowboarding", "winter_hiking"]:
-            avalanche_forecast = get_avalanche_forecast.invoke({
-                "location": location,
-            })
+            avalanche_forecast = await invoke_tool_async(
+                get_avalanche_forecast,
+                {
+                    "location": location,
+                }
+            )
 
         # Get river conditions (if applicable)
         river_conditions = {}
         if route_info and route_info.get("has_river_crossings"):
-            river_conditions = get_river_conditions.invoke({
-                "location": location,
-            })
+            river_conditions = await invoke_tool_async(
+                get_river_conditions,
+                {
+                    "location": location,
+                }
+            )
 
         # Assess route safety
-        route_safety = assess_route_safety.invoke({
-            "location": location,
-            "activity_type": activity_type,
-            "route_info": route_info or {},
-        })
+        route_safety = await invoke_tool_async(
+            assess_route_safety,
+            {
+                "location": location,
+                "activity_type": activity_type,
+                "route_info": route_info or {},
+            }
+        )
 
         try:
             contacts = (

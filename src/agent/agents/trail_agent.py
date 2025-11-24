@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import TrailInfo
 from agent.tools import get_trail_details, search_trails
-
+from agent.utils import invoke_tool_async
 
 # Activity type to trail source mapping
 ACTIVITY_SOURCES = {
@@ -50,10 +50,10 @@ class TrailAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Trail agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="trail",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
     def _get_system_prompt(self, activity_type: str) -> str:
@@ -110,14 +110,17 @@ Provide detailed, accurate trail information for adventure planning."""
         )
         source = activity_info["primary"]
 
-        # Use tool to search trails
-        trail_data = search_trails.invoke({
-            "location": location,
-            "activity_type": activity_type,
-            "source": source,
-            "difficulty": difficulty,
-            "distance": distance,
-        })
+        # Use tool to search trails - wrap in thread to avoid blocking
+        trail_data = await invoke_tool_async(
+            search_trails,
+            {
+                "location": location,
+                "activity_type": activity_type,
+                "source": source,
+                "difficulty": difficulty,
+                "distance": distance,
+            }
+        )
 
         try:
             data = json.loads(trail_data) if isinstance(trail_data, str) else trail_data
@@ -210,11 +213,14 @@ Return enhanced information in JSON format.""",
         Returns:
             Detailed trail information
         """
-        details_data = get_trail_details.invoke({
-            "trail_id": trail_id,
-            "source": source,
-            "activity_type": activity_type,
-        })
+        details_data = await invoke_tool_async(
+            get_trail_details,
+            {
+                "trail_id": trail_id,
+                "source": source,
+                "activity_type": activity_type,
+            }
+        )
         try:
             return (
                 json.loads(details_data)

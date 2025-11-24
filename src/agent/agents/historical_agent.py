@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
-    find_historical_sites,
     find_cultural_sites,
+    find_historical_sites,
     get_local_history,
     get_visitation_guidelines,
 )
@@ -22,10 +22,10 @@ class HistoricalAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Historical agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="historical",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on historical and cultural sites for outdoor adventures.
@@ -44,7 +44,7 @@ Provide accurate, detailed historical and cultural information to help adventure
     async def get_historical_info(
         self,
         location: str,
-        route_info: Optional[Dict[str, Any]] = None,
+        route_info: Dict[str, Any] | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive historical and cultural information.

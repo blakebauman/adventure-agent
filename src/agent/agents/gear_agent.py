@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import GearRecommendation
 from agent.tools import recommend_gear, search_gear_products
+from agent.utils import invoke_tool_async
 
 
 class GearAgent:
@@ -18,10 +19,10 @@ class GearAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Gear agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="gear",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert in outdoor gear and equipment for adventures.
@@ -45,13 +46,16 @@ Focus on quality products that enhance the adventure experience."""
         context: str = "",
     ) -> List[GearRecommendation]:
         """Recommend gear for an adventure."""
-        # Use tool to get recommendations
-        gear_data = recommend_gear.invoke({
-            "adventure_type": adventure_type,
-            "duration_days": duration_days,
-            "skill_level": skill_level,
-            "gear_owned": gear_owned or [],
-        })
+        # Use tool to get recommendations - wrap in thread to avoid blocking
+        gear_data = await invoke_tool_async(
+            recommend_gear,
+            {
+                "adventure_type": adventure_type,
+                "duration_days": duration_days,
+                "skill_level": skill_level,
+                "gear_owned": gear_owned or [],
+            }
+        )
 
         try:
             data = json.loads(gear_data) if isinstance(gear_data, str) else gear_data
@@ -131,10 +135,13 @@ Return enhanced information in JSON format with affiliate links.""",
         self, category: str, price_range: str | None = None
     ) -> List[Dict[str, Any]]:
         """Search for specific gear products."""
-        products_data = search_gear_products.invoke({
-            "category": category,
-            "price_range": price_range,
-        })
+        products_data = await invoke_tool_async(
+            search_gear_products,
+            {
+                "category": category,
+                "price_range": price_range,
+            }
+        )
         try:
             data = (
                 json.loads(products_data)

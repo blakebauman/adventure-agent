@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import AccommodationInfo
 from agent.tools import search_accommodations
+from agent.utils import invoke_tool_async
 
 
 class AccommodationAgent:
@@ -18,10 +19,10 @@ class AccommodationAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Accommodation agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="accommodation",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert in finding accommodations for adventure trips.
@@ -44,13 +45,16 @@ Provide detailed accommodation options suitable for adventure travelers."""
         context: str = "",
     ) -> List[AccommodationInfo]:
         """Find accommodations near a location."""
-        # Use tool to search accommodations
-        acc_data = search_accommodations.invoke({
-            "location": location,
-            "accommodation_type": accommodation_type,
-            "check_in": check_in,
-            "check_out": check_out,
-        })
+        # Use tool to search accommodations - wrap in thread to avoid blocking
+        acc_data = await invoke_tool_async(
+            search_accommodations,
+            {
+                "location": location,
+                "accommodation_type": accommodation_type,
+                "check_in": check_in,
+                "check_out": check_out,
+            }
+        )
 
         try:
             data = json.loads(acc_data) if isinstance(acc_data, str) else acc_data

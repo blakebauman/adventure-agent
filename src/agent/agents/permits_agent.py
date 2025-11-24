@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
+    check_fire_restrictions,
     check_permit_requirements,
     get_permit_information,
     get_regulations,
-    check_fire_restrictions,
     get_seasonal_closures,
 )
+from agent.utils import invoke_tool_async
 
 
 class PermitsAgent:
@@ -23,10 +24,10 @@ class PermitsAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Permits agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="permits",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on permits and regulations for outdoor adventures.
@@ -49,8 +50,8 @@ Always check current requirements and deadlines."""
         self,
         location: str,
         activity_type: str = "mountain_biking",
-        group_size: Optional[int] = None,
-        dates: Optional[List[str]] = None,
+        group_size: int | None = None,
+        dates: List[str] | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive permit and regulation information.
@@ -65,35 +66,50 @@ Always check current requirements and deadlines."""
         Returns:
             Dictionary with permit and regulation information
         """
-        # Check permit requirements
-        permit_check = check_permit_requirements.invoke({
-            "location": location,
-            "activity_type": activity_type,
-            "group_size": group_size or 1,
-        })
+        # Check permit requirements - wrap in thread to avoid blocking
+        permit_check = await invoke_tool_async(
+            check_permit_requirements,
+            {
+                "location": location,
+                "activity_type": activity_type,
+                "group_size": group_size or 1,
+            }
+        )
 
         # Get permit information
-        permit_info = get_permit_information.invoke({
-            "location": location,
-            "activity_type": activity_type,
-        })
+        permit_info = await invoke_tool_async(
+            get_permit_information,
+            {
+                "location": location,
+                "activity_type": activity_type,
+            }
+        )
 
         # Get regulations
-        regulations = get_regulations.invoke({
-            "location": location,
-            "activity_type": activity_type,
-        })
+        regulations = await invoke_tool_async(
+            get_regulations,
+            {
+                "location": location,
+                "activity_type": activity_type,
+            }
+        )
 
         # Check fire restrictions
-        fire_restrictions = check_fire_restrictions.invoke({
-            "location": location,
-            "dates": dates or [],
-        })
+        fire_restrictions = await invoke_tool_async(
+            check_fire_restrictions,
+            {
+                "location": location,
+                "dates": dates or [],
+            }
+        )
 
         # Get seasonal closures
-        closures = get_seasonal_closures.invoke({
-            "location": location,
-        })
+        closures = await invoke_tool_async(
+            get_seasonal_closures,
+            {
+                "location": location,
+            }
+        )
 
         try:
             permit_req = (

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List
 
 from typing_extensions import TypedDict
 
@@ -14,23 +14,23 @@ class UserPreferences(TypedDict, total=False):
     skill_level: str  # beginner, intermediate, advanced, expert
     preferred_terrain: List[str]  # mountain, desert, forest, etc.
     activity_type: str  # mountain_biking, hiking, trail_running, bikepacking, etc.
-    adventure_type: Optional[str]  # Deprecated, use activity_type instead
-    duration_days: Optional[int]
-    distance_preference: Optional[str]  # short, medium, long, epic
-    accommodation_preference: Optional[str]  # camping, hotels, mixed
-    region: Optional[str]  # US state or Canadian province
-    budget_range: Optional[str]
-    gear_owned: Optional[List[str]]
+    adventure_type: str | None  # Deprecated, use activity_type instead
+    duration_days: int | None
+    distance_preference: str | None  # short, medium, long, epic
+    accommodation_preference: str | None  # camping, hotels, mixed
+    region: str | None  # US state or Canadian province
+    budget_range: str | None
+    gear_owned: List[str] | None
 
 
 class Location(TypedDict, total=False):
     """Geographic location information."""
 
     name: str
-    coordinates: Optional[Dict[str, float]]  # {"lat": float, "lon": float}
+    coordinates: Dict[str, float] | None  # {"lat": float, "lon": float}
     region: str
     country: str  # US or Canada
-    description: Optional[str]
+    description: str | None
 
 
 class TrailInfo(TypedDict, total=False):
@@ -38,12 +38,12 @@ class TrailInfo(TypedDict, total=False):
 
     name: str
     source: str  # mtbproject, blm, etc.
-    difficulty: Optional[str]
-    length_miles: Optional[float]
-    elevation_gain: Optional[float]
-    description: Optional[str]
-    url: Optional[str]
-    coordinates: Optional[Dict[str, float]]
+    difficulty: str | None
+    length_miles: float | None
+    elevation_gain: float | None
+    description: str | None
+    url: str | None
+    coordinates: Dict[str, float] | None
 
 
 class BLMLandInfo(TypedDict, total=False):
@@ -54,8 +54,8 @@ class BLMLandInfo(TypedDict, total=False):
     regulations: List[str]
     permits_required: bool
     camping_allowed: bool
-    description: Optional[str]
-    coordinates: Optional[Dict[str, float]]
+    description: str | None
+    coordinates: Dict[str, float] | None
 
 
 class AccommodationInfo(TypedDict, total=False):
@@ -64,10 +64,10 @@ class AccommodationInfo(TypedDict, total=False):
     name: str
     type: str  # hotel, campground, hostel, etc.
     location: str
-    coordinates: Optional[Dict[str, float]]
-    price_range: Optional[str]
+    coordinates: Dict[str, float] | None
+    price_range: str | None
     amenities: List[str]
-    booking_url: Optional[str]
+    booking_url: str | None
 
 
 class GearRecommendation(TypedDict, total=False):
@@ -77,7 +77,7 @@ class GearRecommendation(TypedDict, total=False):
     category: str  # bike, clothing, camping, etc.
     description: str
     affiliate_url: str
-    price_range: Optional[str]
+    price_range: str | None
     essential: bool
 
 
@@ -92,17 +92,17 @@ class AdventurePlan(TypedDict, total=False):
     accommodations: List[AccommodationInfo]
     gear_recommendations: List[GearRecommendation]
     itinerary: List[Dict[str, Any]]
-    total_distance_miles: Optional[float]
+    total_distance_miles: float | None
     estimated_duration_days: int
     difficulty: str
-    weather_info: Optional[Dict[str, Any]]
-    permits_info: Optional[Dict[str, Any]]
-    safety_info: Optional[Dict[str, Any]]
-    transportation_info: Optional[Dict[str, Any]]
-    food_info: Optional[Dict[str, Any]]
-    community_info: Optional[Dict[str, Any]]
-    photography_info: Optional[Dict[str, Any]]
-    historical_info: Optional[Dict[str, Any]]
+    weather_info: Dict[str, Any] | None
+    permits_info: Dict[str, Any] | None
+    safety_info: Dict[str, Any] | None
+    transportation_info: Dict[str, Any] | None
+    food_info: Dict[str, Any] | None
+    community_info: Dict[str, Any] | None
+    photography_info: Dict[str, Any] | None
+    historical_info: Dict[str, Any] | None
 
 
 class AdventureState(TypedDict, total=False):
@@ -110,7 +110,7 @@ class AdventureState(TypedDict, total=False):
 
     # User input
     user_input: str
-    user_preferences: Optional[UserPreferences]
+    user_preferences: UserPreferences | None
 
     # Context from orchestrator
     current_task: str
@@ -121,33 +121,34 @@ class AdventureState(TypedDict, total=False):
     agent_context: Dict[str, str]
 
     # Agent outputs
-    geo_info: Optional[Dict[str, Any]]
+    geo_info: Dict[str, Any] | None
     trail_info: List[TrailInfo]
     blm_info: List[BLMLandInfo]
     accommodation_info: List[AccommodationInfo]
     gear_recommendations: List[GearRecommendation]
-    planning_info: Optional[Dict[str, Any]]
-    weather_info: Optional[Dict[str, Any]]
-    permits_info: Optional[Dict[str, Any]]
-    safety_info: Optional[Dict[str, Any]]
-    transportation_info: Optional[Dict[str, Any]]
-    food_info: Optional[Dict[str, Any]]
-    community_info: Optional[Dict[str, Any]]
-    photography_info: Optional[Dict[str, Any]]
-    historical_info: Optional[Dict[str, Any]]
+    planning_info: Dict[str, Any] | None
+    weather_info: Dict[str, Any] | None
+    permits_info: Dict[str, Any] | None
+    safety_info: Dict[str, Any] | None
+    transportation_info: Dict[str, Any] | None
+    food_info: Dict[str, Any] | None
+    community_info: Dict[str, Any] | None
+    photography_info: Dict[str, Any] | None
+    historical_info: Dict[str, Any] | None
     route_planning_info: List[TrailInfo]
     bikepacking_info: List[TrailInfo]
-    advocacy_info: Optional[Dict[str, Any]]
+    advocacy_info: Dict[str, Any] | None
+    location_info: Dict[str, Any] | None  # Generic location agent output
 
     # Final output
-    adventure_plan: Optional[AdventurePlan]
+    adventure_plan: AdventurePlan | None
 
     # Human-in-the-loop
     needs_human_review: bool
-    human_feedback: Optional[str]
-    approval_status: Optional[str]  # pending, approved, rejected, needs_revision
+    human_feedback: str | None
+    approval_status: str | None  # pending, approved, rejected, needs_revision
 
     # Metadata
     conversation_history: List[Dict[str, str]]
-    errors: List[str]
+    error_details: Annotated[List[Dict[str, Any]], operator.add]  # Structured error information with categorization
 

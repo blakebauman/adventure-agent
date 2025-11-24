@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import TrailInfo
-from agent.tools import search_ridewithgps_routes, search_strava_routes, get_route_details
+from agent.tools import (
+    get_route_details,
+    search_ridewithgps_routes,
+    search_strava_routes,
+)
+from agent.utils import invoke_tool_async
 
 
 class RoutePlanningAgent:
@@ -31,10 +36,10 @@ class RoutePlanningAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Route Planning agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="route_planning",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert in route planning for cycling and outdoor adventures.
@@ -66,11 +71,14 @@ Provide detailed route planning information for adventure planning."""
         Returns:
             List of route information
         """
-        route_data = search_ridewithgps_routes.invoke({
-            "location": location,
-            "activity_type": activity_type,
-            "distance": distance,
-        })
+        route_data = await invoke_tool_async(
+            search_ridewithgps_routes,
+            {
+                "location": location,
+                "activity_type": activity_type,
+                "distance": distance,
+            }
+        )
 
         try:
             data = json.loads(route_data) if isinstance(route_data, str) else route_data
@@ -160,11 +168,14 @@ Return enhanced information in JSON format.""",
         Returns:
             List of route information
         """
-        route_data = search_strava_routes.invoke({
-            "location": location,
-            "activity_type": activity_type,
-            "popularity": popularity or "popular",
-        })
+        route_data = await invoke_tool_async(
+            search_strava_routes,
+            {
+                "location": location,
+                "activity_type": activity_type,
+                "popularity": popularity or "popular",
+            }
+        )
 
         try:
             data = json.loads(route_data) if isinstance(route_data, str) else route_data
@@ -241,11 +252,14 @@ Return enhanced information in JSON format.""",
         self, route_id: str, source: str, activity_type: str
     ) -> Dict[str, Any]:
         """Get detailed information about a specific route."""
-        details_data = get_route_details.invoke({
-            "route_id": route_id,
-            "source": source,
-            "activity_type": activity_type,
-        })
+        details_data = await invoke_tool_async(
+            get_route_details,
+            {
+                "route_id": route_id,
+                "source": source,
+                "activity_type": activity_type,
+            }
+        )
         try:
             return (
                 json.loads(details_data)

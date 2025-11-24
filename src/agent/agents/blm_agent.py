@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import BLMLandInfo
 from agent.tools import get_blm_regulations, search_blm_lands
 
@@ -18,10 +18,10 @@ class BLMAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the BLM agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="blm",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on Bureau of Land Management (BLM) lands 
@@ -39,11 +39,14 @@ Always check current regulations and permit requirements."""
         self, region: str, activity_type: str, context: str = ""
     ) -> list[BLMLandInfo]:
         """Get BLM land information for a region."""
-        # Use tool to search for BLM lands
-        blm_data = search_blm_lands.invoke({
-            "region": region,
-            "activity_type": activity_type,
-        })
+        # Use tool to search for BLM lands - wrap in thread to avoid blocking
+        blm_data = await invoke_tool_async(
+            search_blm_lands,
+            {
+                "region": region,
+                "activity_type": activity_type,
+            }
+        )
 
         try:
             data = json.loads(blm_data) if isinstance(blm_data, str) else blm_data
@@ -116,7 +119,10 @@ Return enhanced information in JSON format.""",
 
     async def get_regulations(self, land_name: str) -> Dict[str, Any]:
         """Get specific regulations for a BLM land."""
-        regulations_data = get_blm_regulations.invoke({"land_name": land_name})
+        regulations_data = await invoke_tool_async(
+            get_blm_regulations,
+            {"land_name": land_name}
+        )
         try:
             return (
                 json.loads(regulations_data)

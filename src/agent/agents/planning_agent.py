@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import create_itinerary
 
 
@@ -17,10 +17,10 @@ class PlanningAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Planning agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
-            temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
+        self.llm = create_llm(
+            agent_name="planning",
+            model_name=model_name,
+            temperature=temperature,
         )
 
         self.system_prompt = """You are an expert in adventure planning and itinerary creation.

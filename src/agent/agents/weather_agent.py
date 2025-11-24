@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
-    get_weather_forecast,
-    get_trail_conditions,
-    get_seasonal_information,
     check_weather_alerts,
+    get_seasonal_information,
+    get_trail_conditions,
+    get_weather_forecast,
 )
+from agent.utils import invoke_tool_async
 
 
 class WeatherAgent:
@@ -22,10 +23,10 @@ class WeatherAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Weather agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="weather",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on weather and trail conditions for adventure planning.
@@ -46,7 +47,7 @@ Always prioritize safety considerations."""
     async def get_weather_info(
         self,
         location: str,
-        dates: Optional[List[str]] = None,
+        dates: List[str] | None = None,
         activity_type: str = "mountain_biking",
         context: str = "",
     ) -> Dict[str, Any]:
@@ -61,28 +62,40 @@ Always prioritize safety considerations."""
         Returns:
             Dictionary with weather and conditions information
         """
-        # Get weather forecast
-        forecast_data = get_weather_forecast.invoke({
-            "location": location,
-            "dates": dates or [],
-        })
+        # Get weather forecast - wrap in thread to avoid blocking
+        forecast_data = await invoke_tool_async(
+            get_weather_forecast,
+            {
+                "location": location,
+                "dates": dates or [],
+            }
+        )
 
         # Get trail conditions
-        conditions_data = get_trail_conditions.invoke({
-            "location": location,
-            "activity_type": activity_type,
-        })
+        conditions_data = await invoke_tool_async(
+            get_trail_conditions,
+            {
+                "location": location,
+                "activity_type": activity_type,
+            }
+        )
 
         # Get seasonal information
-        seasonal_data = get_seasonal_information.invoke({
-            "location": location,
-            "activity_type": activity_type,
-        })
+        seasonal_data = await invoke_tool_async(
+            get_seasonal_information,
+            {
+                "location": location,
+                "activity_type": activity_type,
+            }
+        )
 
         # Check for weather alerts
-        alerts_data = check_weather_alerts.invoke({
-            "location": location,
-        })
+        alerts_data = await invoke_tool_async(
+            check_weather_alerts,
+            {
+                "location": location,
+            }
+        )
 
         try:
             forecast = (
@@ -180,7 +193,9 @@ Return enhanced information in JSON format.""",
         self, location: str, activity_type: str = "mountain_biking"
     ) -> Dict[str, Any]:
         """Get only trail conditions information."""
-        conditions_data = get_trail_conditions.invoke({
+        conditions_data = await invoke_tool_async(
+            get_trail_conditions,
+            {
             "location": location,
             "activity_type": activity_type,
         })

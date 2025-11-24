@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
 
@@ -41,7 +41,7 @@ class AdventureAgentClient:
     def __init__(
         self,
         base_url: str = "http://localhost:2024",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout: float = 300.0,
     ) -> None:
         """Initialize the Adventure Agent API client.
@@ -59,8 +59,8 @@ class AdventureAgentClient:
 
     def create_thread(
         self,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Create a new conversation thread.
         
@@ -93,7 +93,7 @@ class AdventureAgentClient:
         self,
         thread_id: str,
         user_input: str,
-        user_preferences: Optional[Dict[str, Any]] = None,
+        user_preferences: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Create an adventure plan from natural language input.
         
@@ -149,7 +149,7 @@ class AdventureAgentClient:
         self,
         thread_id: str,
         run_id: str,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         poll_interval: float = 1.0,
     ) -> Dict[str, Any]:
         """Wait for a run to complete and return the final state.
@@ -278,9 +278,9 @@ class AdventureAgentClient:
 # Convenience function for simple usage
 def create_adventure_plan_simple(
     user_input: str,
-    user_preferences: Optional[Dict[str, Any]] = None,
+    user_preferences: Dict[str, Any] | None = None,
     base_url: str = "http://localhost:2024",
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
 ) -> Dict[str, Any]:
     """Create an adventure plan with a single function call.
     

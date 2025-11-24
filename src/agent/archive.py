@@ -7,11 +7,10 @@ for future retrieval and analysis.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from uuid import uuid4
 
 from agent.config import Config
@@ -21,7 +20,7 @@ from agent.state import AdventureState
 class ArchiveBackend:
     """Base class for archive storage backends."""
 
-    def save_plan(self, state: AdventureState, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def save_plan(self, state: AdventureState, metadata: Dict[str, Any] | None = None) -> str:
         """Save an adventure plan and return archive ID.
         
         Args:
@@ -33,7 +32,7 @@ class ArchiveBackend:
         """
         raise NotImplementedError
 
-    def get_plan(self, archive_id: str) -> Optional[Dict[str, Any]]:
+    def get_plan(self, archive_id: str) -> Dict[str, Any] | None:
         """Retrieve an archived plan by ID.
         
         Args:
@@ -46,7 +45,7 @@ class ArchiveBackend:
 
     def list_plans(
         self,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -65,7 +64,7 @@ class ArchiveBackend:
     def search_plans(
         self,
         query: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Search archived plans by title, description, or location.
@@ -142,7 +141,7 @@ class SQLiteArchiveBackend(ArchiveBackend):
         conn.commit()
         conn.close()
 
-    def save_plan(self, state: AdventureState, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def save_plan(self, state: AdventureState, metadata: Dict[str, Any] | None = None) -> str:
         """Save plan to SQLite database."""
         archive_id = str(uuid4())
         metadata = metadata or {}
@@ -198,7 +197,7 @@ class SQLiteArchiveBackend(ArchiveBackend):
         
         return archive_id
 
-    def get_plan(self, archive_id: str) -> Optional[Dict[str, Any]]:
+    def get_plan(self, archive_id: str) -> Dict[str, Any] | None:
         """Retrieve plan from SQLite database."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -231,7 +230,7 @@ class SQLiteArchiveBackend(ArchiveBackend):
 
     def list_plans(
         self,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -279,7 +278,7 @@ class SQLiteArchiveBackend(ArchiveBackend):
     def search_plans(
         self,
         query: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Search plans using full-text search."""
@@ -352,7 +351,7 @@ class JSONFileArchiveBackend(ArchiveBackend):
 
     def _load_index(self) -> Dict[str, Any]:
         """Load index file."""
-        with open(self.index_file, "r") as f:
+        with open(self.index_file) as f:
             return json.load(f)
 
     def _save_index(self, index: Dict[str, Any]):
@@ -360,7 +359,7 @@ class JSONFileArchiveBackend(ArchiveBackend):
         with open(self.index_file, "w") as f:
             json.dump(index, f, indent=2)
 
-    def save_plan(self, state: AdventureState, metadata: Optional[Dict[str, Any]] = None) -> str:
+    def save_plan(self, state: AdventureState, metadata: Dict[str, Any] | None = None) -> str:
         """Save plan to JSON file."""
         archive_id = str(uuid4())
         metadata = metadata or {}
@@ -414,18 +413,18 @@ class JSONFileArchiveBackend(ArchiveBackend):
         
         return archive_id
 
-    def get_plan(self, archive_id: str) -> Optional[Dict[str, Any]]:
+    def get_plan(self, archive_id: str) -> Dict[str, Any] | None:
         """Retrieve plan from JSON file."""
         plan_file = self.archive_dir / f"{archive_id}.json"
         if not plan_file.exists():
             return None
         
-        with open(plan_file, "r") as f:
+        with open(plan_file) as f:
             return json.load(f)
 
     def list_plans(
         self,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -446,7 +445,7 @@ class JSONFileArchiveBackend(ArchiveBackend):
     def search_plans(
         self,
         query: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Search plans (simple text matching)."""
@@ -473,7 +472,7 @@ class JSONFileArchiveBackend(ArchiveBackend):
         return matching[:limit]
 
 
-def get_archive_backend() -> Optional[ArchiveBackend]:
+def get_archive_backend() -> ArchiveBackend | None:
     """Get configured archive backend based on config.
     
     Returns:
@@ -500,9 +499,9 @@ def get_archive_backend() -> Optional[ArchiveBackend]:
 
 def archive_plan(
     state: AdventureState,
-    user_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-) -> Optional[str]:
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> str | None:
     """Archive a completed adventure plan.
     
     Args:

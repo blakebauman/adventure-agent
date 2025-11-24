@@ -1,11 +1,11 @@
 """Utility functions for retrieving and managing archived adventure plans."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from agent.archive import get_archive_backend
 
 
-def get_archived_plan(archive_id: str) -> Optional[Dict[str, Any]]:
+def get_archived_plan(archive_id: str) -> Dict[str, Any] | None:
     """Retrieve an archived adventure plan by ID.
     
     Args:
@@ -26,7 +26,7 @@ def get_archived_plan(archive_id: str) -> Optional[Dict[str, Any]]:
 
 
 def list_archived_plans(
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> List[Dict[str, Any]]:
@@ -63,7 +63,7 @@ def list_archived_plans(
 
 def search_archived_plans(
     query: str,
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
     """Search archived adventure plans by title, description, or location.

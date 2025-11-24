@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.tools import (
     find_grocery_stores,
     find_restaurants,
-    find_water_sources,
     find_resupply_points,
+    find_water_sources,
     get_local_food_recommendations,
 )
+from agent.utils import invoke_tool_async
 
 
 class FoodAgent:
@@ -23,10 +24,10 @@ class FoodAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Food agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="food",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert on food and resupply options for outdoor adventures.
@@ -45,8 +46,8 @@ Provide accurate, detailed food and resupply information to help adventurers pla
     async def get_food_info(
         self,
         location: str,
-        route_info: Optional[Dict[str, Any]] = None,
-        duration_days: Optional[int] = None,
+        route_info: Dict[str, Any] | None = None,
+        duration_days: int | None = None,
         context: str = "",
     ) -> Dict[str, Any]:
         """Get comprehensive food and resupply information.
@@ -60,34 +61,49 @@ Provide accurate, detailed food and resupply information to help adventurers pla
         Returns:
             Dictionary with food and resupply information
         """
-        # Find grocery stores
-        groceries = find_grocery_stores.invoke({
-            "location": location,
-            "route_info": route_info or {},
-        })
+        # Find grocery stores - wrap in thread to avoid blocking
+        groceries = await invoke_tool_async(
+            find_grocery_stores,
+            {
+                "location": location,
+                "route_info": route_info or {},
+            }
+        )
 
         # Find restaurants
-        restaurants = find_restaurants.invoke({
-            "location": location,
-            "route_info": route_info or {},
-        })
+        restaurants = await invoke_tool_async(
+            find_restaurants,
+            {
+                "location": location,
+                "route_info": route_info or {},
+            }
+        )
 
         # Find water sources
-        water = find_water_sources.invoke({
-            "location": location,
-            "route_info": route_info or {},
-        })
+        water = await invoke_tool_async(
+            find_water_sources,
+            {
+                "location": location,
+                "route_info": route_info or {},
+            }
+        )
 
         # Find resupply points
-        resupply = find_resupply_points.invoke({
-            "location": location,
-            "duration_days": duration_days or 1,
-        })
+        resupply = await invoke_tool_async(
+            find_resupply_points,
+            {
+                "location": location,
+                "duration_days": duration_days or 1,
+            }
+        )
 
         # Get local food recommendations
-        local_food = get_local_food_recommendations.invoke({
-            "location": location,
-        })
+        local_food = await invoke_tool_async(
+            get_local_food_recommendations,
+            {
+                "location": location,
+            }
+        )
 
         try:
             grocery_data = (

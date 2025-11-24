@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import List
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 from agent.config import Config
+from agent.models import create_llm
 from agent.state import TrailInfo
 from agent.tools import (
-    search_bikepacking_routes,
     search_bikepacking_roots_routes,
-    get_bikepacking_route_details,
+    search_bikepacking_routes,
 )
+from agent.utils import invoke_tool_async
 
 
 class BikepackingAgent:
@@ -34,10 +34,10 @@ class BikepackingAgent:
 
     def __init__(self, model_name: str | None = None, temperature: float | None = None):
         """Initialize the Bikepacking agent."""
-        self.llm = ChatOpenAI(
-            model_name=model_name or Config.OPENAI_MODEL,
+        self.llm = create_llm(
+            agent_name="bikepacking",
+            model_name=model_name,
             temperature=temperature if temperature is not None else 0.3,
-            api_key=Config.OPENAI_API_KEY,
         )
 
         self.system_prompt = """You are an expert in bikepacking routes and multi-day cycling adventures.
@@ -70,11 +70,14 @@ Provide detailed bikepacking route information for adventure planning."""
         Returns:
             List of route information
         """
-        route_data = search_bikepacking_routes.invoke({
-            "location": location,
-            "route_type": route_type,
-            "duration_days": duration_days,
-        })
+        route_data = await invoke_tool_async(
+            search_bikepacking_routes,
+            {
+                "location": location,
+                "route_type": route_type,
+                "duration_days": duration_days,
+            }
+        )
 
         try:
             data = json.loads(route_data) if isinstance(route_data, str) else route_data
@@ -153,7 +156,10 @@ Return enhanced information in JSON format.""",
         self, location: str, context: str = ""
     ) -> List[TrailInfo]:
         """Search for routes from Bikepacking Roots."""
-        route_data = search_bikepacking_roots_routes.invoke({"location": location})
+        route_data = await invoke_tool_async(
+            search_bikepacking_roots_routes,
+            {"location": location}
+        )
 
         try:
             data = json.loads(route_data) if isinstance(route_data, str) else route_data

@@ -5,7 +5,7 @@ alwaysApply: true
 # Project Overview
 
 ## Project Description
-Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a multi-agent architecture to plan mountain bike adventures, bikepacking trips, and outdoor adventures across the US and Canada.
+Arizona Adventure Agentic Workflow is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It specializes in planning mountain bike adventures, bikepacking trips, and outdoor adventures throughout Arizona. The system uses a multi-agent architecture with location-specific agents for Arizona cities and towns.
 
 ## Architecture
 - **Hub-and-Spoke Architecture**: Orchestrator agent manages 14+ specialized agents
