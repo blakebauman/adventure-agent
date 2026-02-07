@@ -293,7 +293,7 @@ def get_rate_limiter(endpoint: str) -> RateLimiter:
                 max_calls_per_second=1.0,
                 max_calls_per_minute=30.0,
             )
-        elif endpoint in ("recreation_gov", "recreation_gov_blm"):
+        elif endpoint in ("recreation_gov", "recreation_gov_blm", "recreation_gov_permits", "recreation_gov_permit_info"):
             # Recreation.gov: no official limit, be conservative
             _rate_limiters[endpoint] = RateLimiter(
                 max_calls_per_second=2.0,
@@ -305,11 +305,17 @@ def get_rate_limiter(endpoint: str) -> RateLimiter:
                 max_calls_per_second=5.0,
                 max_calls_per_minute=300.0,
             )
-        elif endpoint == "tavily_blm":
+        elif endpoint.startswith("tavily_"):
             # Tavily API: depends on plan, default conservative
             _rate_limiters[endpoint] = RateLimiter(
                 max_calls_per_second=1.0,
                 max_calls_per_minute=30.0,
+            )
+        elif endpoint == "nifc_fires":
+            # NIFC ArcGIS API: public, be conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=2.0,
+                max_calls_per_minute=60.0,
             )
         else:
             # Default conservative limits
