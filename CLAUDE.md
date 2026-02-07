@@ -67,6 +67,8 @@ The orchestrator (`src/agent/agents/orchestrator.py`) manages specialized agents
 | Graph | `src/agent/graph.py` | StateGraph with conditional routing, parallel execution, entry point is `graph` |
 | Config | `src/agent/config.py` | Environment config, model settings, checkpointer |
 | Tools | `src/agent/tools.py` | 60+ tools for external integrations |
+| Utils | `src/agent/utils.py` | Helper functions for state extraction and agent node creation |
+| Cache | `src/agent/cache.py` | API caching and rate limiting utilities |
 | Agents | `src/agent/agents/` | All agent implementations |
 
 ### Agent Execution Flow
@@ -96,6 +98,68 @@ async def agent_name_node(state: AdventureState) -> Dict[str, Any] | Command[Lit
         error_result["agent_output"] = fallback_value
         return error_result
 ```
+
+### Utility Functions (`src/agent/utils.py`)
+Use these helpers to reduce boilerplate and ensure consistency:
+
+```python
+from agent.utils import (
+    extract_activity_type,  # Get activity with backward compatibility
+    extract_location,       # Get location with cascading fallbacks
+    extract_context,        # Get agent-specific context
+    extract_route_info,     # Get trail info for dependent agents
+    create_agent_node,      # Factory for standardized agent nodes
+    invoke_tool_async,      # Async wrapper for sync tools
+)
+
+# extract_activity_type - handles deprecated adventure_type field
+activity = extract_activity_type(state.get("user_preferences"))  # Returns "mountain_biking" etc.
+
+# extract_location - cascading fallbacks: geo_info → user_preferences → user_input
+location = extract_location(state, default="Arizona")
+
+# extract_context - agent-specific context with user_input fallback
+context = extract_context(state, "trail_agent")
+
+# extract_route_info - get trail info for safety, food, photography agents
+route_info = extract_route_info(state)  # Returns {"trails": [...]}
+
+# create_agent_node - factory for consistent agent nodes with error handling
+async def invoke_blm(state, context):
+    location = extract_location(state)
+    activity = extract_activity_type(state.get("user_preferences"))
+    return await blm_agent.get_blm_information(location, activity, context)
+
+blm_agent_node = create_agent_node(
+    agent_name="blm_agent",
+    output_field="blm_info",
+    invoke_fn=invoke_blm,
+    fallback_value=[],
+)
+```
+
+### API Caching (`src/agent/cache.py`)
+Use `cached_api_call()` for all external API requests:
+```python
+from agent.cache import cached_api_call
+
+def _fetch_data() -> dict:
+    with httpx.Client() as client:
+        response = client.get(url, params=params, timeout=10.0)
+        return response.json() if response.status_code == 200 else {}
+
+result = cached_api_call(
+    endpoint="api_name",           # Rate limiter key
+    params={"lat": lat, "lon": lon},  # Cache key params
+    api_func=_fetch_data,          # Function to call on cache miss
+    ttl=3600.0,                    # Cache TTL in seconds
+)
+```
+
+Cache TTL guidelines:
+- **30 min - 1 hr**: Time-sensitive data (weather alerts, fire data)
+- **2-6 hours**: Frequently changing (weather forecasts, restaurant availability)
+- **12-24 hours**: Stable data (locations, trails, permits, regulations)
 
 ### State Management
 ```python
@@ -131,10 +195,34 @@ result = await llm_structured.ainvoke(messages)  # Returns AnalysisModel instanc
 ```
 
 ### Location Agent Pattern
-Location agents extend `LocationAgentBase` and are created via factory:
+Location agents extend `LocationAgentBase` and use structured output for consistent responses:
+
+```python
+# Location agents use Pydantic schemas (see location_response_schemas.py)
+from agent.agents.location_response_schemas import (
+    LocationGuideResponse,  # Main response schema
+    LocationOverview,       # Coordinates, elevation, region, proximity
+    OutdoorActivity,        # Activity type, trails, difficulty, seasons
+    Attraction,             # Name, type, description, highlights
+    Business,               # Restaurants, accommodations, shops
+    PracticalInfo,          # Parking, permits, weather, access
+)
+
+# LocationAgentBase uses structured output internally:
+self.structured_llm = self.llm.with_structured_output(
+    LocationGuideResponse, method="function_calling"
+)
+
+# Response is normalized and validated automatically via field_validators
+```
+
+Location agent registration and lookup:
 ```python
 location_agent_node = create_location_agent_node("agent_name", agent_instance)
 register_location_agent(agent_instance)  # Register for dynamic lookup
+
+# Find agent for a location
+agent = find_location_agent_for_location("Sedona, Arizona")  # Returns sedona_agent
 ```
 
 ### Activity Types & Skill Mapping
