@@ -228,34 +228,35 @@ def handle_agent_error(
     """
     error_detail = ErrorCategory.create_error_dict(error, agent_name)
     error_type = ErrorType(error_detail["type"])
-    
-    # Get existing error details
-    existing_error_details = state.get("error_details", [])
-    
+
+    # Note: error_details uses operator.add reducer in state, so we only return
+    # the new error - the reducer will merge it with existing errors automatically.
+    # This is critical for parallel execution where multiple agents may fail.
+
     # For LLM-recoverable errors, route back to orchestrator
     if error_type == ErrorType.LLM_RECOVERABLE:
         # Store error in state and route to orchestrator for recovery
         return Command(
             update={
-                "error_details": existing_error_details + [error_detail],
+                "error_details": [error_detail],  # Reducer merges with existing
                 # Don't mark as completed - let orchestrator decide if we should retry
             },
             goto="orchestrator",
         )
-    
+
     # For user-fixable errors, we could use interrupt, but for now just store error
     # (Could be enhanced to use interrupt() for user input)
     if error_type == ErrorType.USER_FIXABLE:
         return {
-            "error_details": existing_error_details + [error_detail],
+            "error_details": [error_detail],  # Reducer merges with existing
             "completed_agents": [agent_name],  # Mark as completed to avoid infinite loops
         }
-    
+
     # For transient and permanent errors, store error and continue
     # Transient errors should be handled by retry policies
     # Permanent errors should be logged and execution should continue
     return {
-        "error_details": existing_error_details + [error_detail],
+        "error_details": [error_detail],  # Reducer merges with existing
         "completed_agents": [agent_name],
     }
 
@@ -416,7 +417,7 @@ async def orchestrator_node(state: AdventureState) -> Dict[str, Any]:
         # Orchestrator errors are critical - use standard error handling
         error_detail = ErrorCategory.create_error_dict(e, "orchestrator")
         return {
-            "error_details": state.get("error_details", []) + [error_detail],
+            "error_details": [error_detail],  # Reducer merges with existing
             "required_agents": ["geo_agent", "trail_agent"],  # Fallback
             "completed_agents": [],
             "agent_context": {},
@@ -937,7 +938,7 @@ async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
                     "description": "Unable to generate complete plan - no agent data available.",
                     "error": "No agent outputs to synthesize",
                 },
-                "error_details": state.get("error_details", []) + [{"agent": "system", "type": "permanent", "message": "No agent data available for synthesis", "error_class": "SystemError"}],
+                "error_details": [{"agent": "system", "type": "permanent", "message": "No agent data available for synthesis", "error_class": "SystemError"}],  # Reducer merges
             }
         
         # Include human feedback if this is a revision
@@ -955,7 +956,7 @@ async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
                     "description": "Plan synthesis timed out. Please try again.",
                     "error": "Synthesis timeout",
                 },
-                "error_details": state.get("error_details", []) + [{"agent": "system", "type": "permanent", "message": "Plan synthesis timed out", "error_class": "SystemError"}],
+                "error_details": [{"agent": "system", "type": "permanent", "message": "Plan synthesis timed out", "error_class": "SystemError"}],  # Reducer merges
             }
 
         result = {
@@ -978,7 +979,7 @@ async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
                 "description": f"Error generating plan: {error_msg}",
                 "error": error_msg,
             },
-            "error_details": state.get("error_details", []) + [error_detail],
+            "error_details": [error_detail],  # Reducer merges with existing
         }
 
 

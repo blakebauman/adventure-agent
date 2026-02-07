@@ -10,10 +10,9 @@ import hashlib
 import json
 import time
 from collections import defaultdict
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 from agent.config import Config
-
 
 # Check if caching/rate limiting is enabled
 ENABLE_CACHING = Config.ENABLE_CACHING
@@ -29,8 +28,8 @@ class RateLimiter:
     def __init__(
         self,
         max_calls_per_second: float = 1.0,
-        max_calls_per_minute: Optional[float] = None,
-        max_calls_per_hour: Optional[float] = None,
+        max_calls_per_minute: float | None = None,
+        max_calls_per_hour: float | None = None,
     ) -> None:
         """Initialize rate limiter.
         
@@ -79,7 +78,7 @@ class RateLimiter:
                 wait_time = lock_until - now
                 # Try to use async sleep if in async context, otherwise sync
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                     # We're in async context, but can't await here
                     # Use sync sleep - will be detected as blocking by LangGraph
                     _sleep_sync(wait_time)
@@ -174,8 +173,8 @@ class APICache:
         self,
         endpoint: str,
         params: Dict[str, Any],
-        ttl: Optional[float] = None,
-    ) -> Optional[Any]:
+        ttl: float | None = None,
+    ) -> Any | None:
         """Get cached response if available and not expired.
         
         Args:
@@ -205,7 +204,7 @@ class APICache:
         endpoint: str,
         params: Dict[str, Any],
         value: Any,
-        ttl: Optional[float] = None,
+        ttl: float | None = None,
     ) -> None:
         """Store a response in the cache.
         
@@ -294,6 +293,24 @@ def get_rate_limiter(endpoint: str) -> RateLimiter:
                 max_calls_per_second=1.0,
                 max_calls_per_minute=30.0,
             )
+        elif endpoint in ("recreation_gov", "recreation_gov_blm"):
+            # Recreation.gov: no official limit, be conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=2.0,
+                max_calls_per_minute=60.0,
+            )
+        elif endpoint in ("google_places", "google_places_details"):
+            # Google Places API: depends on plan, be conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=5.0,
+                max_calls_per_minute=300.0,
+            )
+        elif endpoint == "tavily_blm":
+            # Tavily API: depends on plan, default conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=1.0,
+                max_calls_per_minute=30.0,
+            )
         else:
             # Default conservative limits
             _rate_limiters[endpoint] = RateLimiter(
@@ -317,8 +334,8 @@ def cached_api_call(
     endpoint: str,
     params: Dict[str, Any],
     api_func: Callable[[], Any],
-    ttl: Optional[float] = None,
-    use_rate_limiting: Optional[bool] = None,
+    ttl: float | None = None,
+    use_rate_limiting: bool | None = None,
 ) -> Any:
     """Make an API call with caching and rate limiting.
     

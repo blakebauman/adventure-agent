@@ -8,6 +8,7 @@ from typing import List
 import httpx
 from langchain.tools import tool
 
+from agent.cache import cached_api_call
 from agent.config import Config
 from agent.tools.geo import get_coordinates
 

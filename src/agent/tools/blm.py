@@ -7,6 +7,7 @@ import json
 import httpx
 from langchain.tools import tool
 
+from agent.cache import cached_api_call
 from agent.config import Config
 
 # Import tools - use relative imports to avoid circular dependencies
@@ -37,26 +38,25 @@ def search_blm_lands(region: str, activity_type: str = "mountain_biking") -> str
         
         # Use Recreation.gov API to find nearby BLM sites
         # Recreation.gov has some BLM data
-        with httpx.Client() as client:
-            # Search for recreation areas near the location
-            url = "https://ridb.recreation.gov/api/v1/recareas"
-            # Use API key from config, fallback to "public" for rate-limited access
-            api_key = Config.RECREATION_GOV_API_KEY or "public"
-            headers = {"apikey": api_key}
-            params = {
-                "limit": 10,
-                "offset": 0,
-                "latitude": lat,
-                "longitude": lon,
-                "radius": 50,  # 50 mile radius
-            }
-            
-            try:
+        def _call_recreation_gov_blm() -> list:
+            """Fetch BLM recreation areas from Recreation.gov API."""
+            with httpx.Client() as client:
+                url = "https://ridb.recreation.gov/api/v1/recareas"
+                api_key = Config.RECREATION_GOV_API_KEY or "public"
+                headers = {"apikey": api_key}
+                params = {
+                    "limit": 10,
+                    "offset": 0,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "radius": 50,  # 50 mile radius
+                }
+
                 response = client.get(url, headers=headers, params=params, timeout=10.0)
                 if response.status_code == 200:
                     data = response.json()
                     rec_areas = data.get("RECDATA", [])
-                    
+
                     # Filter for BLM managed areas
                     blm_lands = []
                     for area in rec_areas:
@@ -78,56 +78,80 @@ def search_blm_lands(region: str, activity_type: str = "mountain_biking") -> str
                                 },
                                 "url": f"https://www.recreation.gov/camping/campgrounds/{area.get('RecAreaID')}" if area.get("RecAreaID") else None,
                             })
-                    
-                    if blm_lands:
-                        return json.dumps({
-                            "lands": blm_lands,
-                            "region": region,
-                            "source": "recreation.gov",
-                        })
+                    return blm_lands
                 elif response.status_code == 401:
-                    print(f"Recreation.gov API authentication failed. Check your RECREATION_GOV_API_KEY in .env file.")
+                    print("Recreation.gov API authentication failed. Check your RECREATION_GOV_API_KEY in .env file.")
                 else:
                     print(f"Recreation.gov API error: {response.status_code} - {response.text[:200]}")
-            except Exception as e:
-                print(f"Recreation.gov API error: {e}")
+                return []
+
+        try:
+            # Cache BLM land data for 24 hours (land data changes very slowly)
+            blm_lands = cached_api_call(
+                endpoint="recreation_gov_blm",
+                params={"lat": lat, "lon": lon, "activity": activity_type},
+                api_func=_call_recreation_gov_blm,
+                ttl=86400.0,  # 24 hours
+            )
+
+            if blm_lands:
+                return json.dumps({
+                    "lands": blm_lands,
+                    "region": region,
+                    "source": "recreation.gov",
+                })
+        except Exception as e:
+            print(f"Recreation.gov API error: {e}")
         
         # Fallback: Use web search via Tavily if available
         if Config.TAVILY_API_KEY:
-            try:
+            def _search_blm_web() -> list:
+                """Search for BLM information via Tavily web search."""
                 search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
                 query = f"BLM Bureau of Land Management {region} {activity_type} recreation areas"
                 results = search_tool.search_web(query)
-                
-                if results:
-                    # Extract information from search results
-                    blm_info = []
-                    for result in results[:3]:  # Top 3 results
-                        title = result.get("title", "")
-                        content = result.get("content", "")
-                        url = result.get("url", "")
-                        
-                        if "BLM" in title.upper() or "BUREAU OF LAND MANAGEMENT" in title.upper():
-                            blm_info.append({
-                                "name": title,
-                                "description": content[:200] + "..." if len(content) > 200 else content,
-                                "access_points": ["Contact local BLM office"],
-                                "regulations": [
-                                    "Permits may be required for overnight use",
-                                    "Stay on designated trails",
-                                    "Pack in, pack out",
-                                ],
-                                "permits_required": "overnight" in content.lower(),
-                                "camping_allowed": "camping" in content.lower() or "camp" in content.lower(),
-                                "url": url,
-                            })
-                    
-                    if blm_info:
-                        return json.dumps({
-                            "lands": blm_info,
-                            "region": region,
-                            "source": "web_search",
+
+                if not results:
+                    return []
+
+                # Extract information from search results
+                blm_info = []
+                for result in results[:3]:  # Top 3 results
+                    title = result.get("title", "")
+                    content = result.get("content", "")
+                    url = result.get("url", "")
+
+                    if "BLM" in title.upper() or "BUREAU OF LAND MANAGEMENT" in title.upper():
+                        blm_info.append({
+                            "name": title,
+                            "description": content[:200] + "..." if len(content) > 200 else content,
+                            "access_points": ["Contact local BLM office"],
+                            "regulations": [
+                                "Permits may be required for overnight use",
+                                "Stay on designated trails",
+                                "Pack in, pack out",
+                            ],
+                            "permits_required": "overnight" in content.lower(),
+                            "camping_allowed": "camping" in content.lower() or "camp" in content.lower(),
+                            "url": url,
                         })
+                return blm_info
+
+            try:
+                # Cache web search results for 6 hours (information may change)
+                blm_info = cached_api_call(
+                    endpoint="tavily_blm",
+                    params={"region": region, "activity": activity_type},
+                    api_func=_search_blm_web,
+                    ttl=21600.0,  # 6 hours
+                )
+
+                if blm_info:
+                    return json.dumps({
+                        "lands": blm_info,
+                        "region": region,
+                        "source": "web_search",
+                    })
             except Exception as e:
                 print(f"Web search error for BLM data: {e}")
     except Exception as e:

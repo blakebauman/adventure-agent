@@ -101,7 +101,13 @@ async def agent_name_node(state: AdventureState) -> Dict[str, Any] | Command[Lit
 ```python
 # State uses Annotated types with reducers for parallel execution
 completed_agents: Annotated[List[str], operator.add]  # Merges lists from parallel nodes
-error_details: Annotated[List[Dict[str, Any]], operator.add]
+error_details: Annotated[List[Dict[str, Any]], operator.add]  # Merges error lists
+
+# IMPORTANT: With reducers, only return NEW items - reducer handles merging
+# CORRECT:
+return {"error_details": [new_error], "completed_agents": ["agent_name"]}
+# WRONG (causes duplicates in parallel execution):
+return {"error_details": state.get("error_details", []) + [new_error]}
 
 # Safe access patterns
 location = state.get("geo_info", {}).get("location", "") if state.get("geo_info") else ""
