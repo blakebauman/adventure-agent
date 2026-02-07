@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import httpx
 from langchain.tools import tool
 
+from agent.cache import cached_api_call
 from agent.config import Config
 from agent.tools.geo import get_coordinates
 from agent.tools.web_search import WebSearchTool
@@ -40,7 +41,8 @@ def get_emergency_contacts(location: str) -> str:
         
         # Use Google Places API to find hospitals if available
         if Config.GOOGLE_PLACES_API_KEY:
-            try:
+            def _find_nearby_hospitals() -> list:
+                """Find nearby hospitals via Google Places API."""
                 with httpx.Client() as client:
                     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
                     params = {
@@ -49,46 +51,66 @@ def get_emergency_contacts(location: str) -> str:
                         "type": "hospital",
                         "key": Config.GOOGLE_PLACES_API_KEY,
                     }
-                    
                     response = client.get(url, params=params, timeout=10.0)
                     if response.status_code == 200:
-                        data = response.json()
-                        places = data.get("results", [])
-                        
-                        if places:
-                            nearest_hospital = places[0]
-                            hospital_name = nearest_hospital.get("name", "Nearest Hospital")
-                            hospital_address = nearest_hospital.get("vicinity", location)
-                            
-                            # Get phone number if available
-                            place_id = nearest_hospital.get("place_id")
-                            if place_id:
-                                details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-                                details_params = {
-                                    "place_id": place_id,
-                                    "fields": "formatted_phone_number",
-                                    "key": Config.GOOGLE_PLACES_API_KEY,
-                                }
-                                
-                                try:
-                                    details_response = client.get(details_url, params=details_params, timeout=10.0)
-                                    if details_response.status_code == 200:
-                                        details_data = details_response.json().get("result", {})
-                                        phone = details_data.get("formatted_phone_number")
-                                        if phone:
-                                            emergency_contacts["medical_services"] = {
-                                                "name": hospital_name,
-                                                "address": hospital_address,
-                                                "phone": phone,
-                                            }
-                                except Exception:
-                                    pass
-                            
-                            if "medical_services" not in emergency_contacts:
+                        return response.json().get("results", [])[:3]
+                    return []
+
+            def _get_hospital_details(place_id: str) -> dict:
+                """Get hospital details including phone number."""
+                with httpx.Client() as client:
+                    url = "https://maps.googleapis.com/maps/api/place/details/json"
+                    params = {
+                        "place_id": place_id,
+                        "fields": "formatted_phone_number",
+                        "key": Config.GOOGLE_PLACES_API_KEY,
+                    }
+                    response = client.get(url, params=params, timeout=10.0)
+                    if response.status_code == 200:
+                        return response.json().get("result", {})
+                    return {}
+
+            try:
+                # Cache hospital search for 24 hours (hospitals don't move)
+                places = cached_api_call(
+                    endpoint="google_places",
+                    params={"lat": lat, "lon": lon, "type": "hospital"},
+                    api_func=_find_nearby_hospitals,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                if places:
+                    nearest_hospital = places[0]
+                    hospital_name = nearest_hospital.get("name", "Nearest Hospital")
+                    hospital_address = nearest_hospital.get("vicinity", location)
+
+                    # Get phone number if available
+                    place_id = nearest_hospital.get("place_id")
+                    if place_id:
+                        try:
+                            # Cache hospital details for 24 hours
+                            details_data = cached_api_call(
+                                endpoint="google_places_details",
+                                params={"place_id": place_id},
+                                api_func=lambda pid=place_id: _get_hospital_details(pid),
+                                ttl=86400.0,  # 24 hours
+                            )
+
+                            phone = details_data.get("formatted_phone_number") if details_data else None
+                            if phone:
                                 emergency_contacts["medical_services"] = {
                                     "name": hospital_name,
                                     "address": hospital_address,
+                                    "phone": phone,
                                 }
+                        except Exception:
+                            pass
+
+                    if "medical_services" not in emergency_contacts:
+                        emergency_contacts["medical_services"] = {
+                            "name": hospital_name,
+                            "address": hospital_address,
+                        }
             except Exception as e:
                 print(f"Google Places API error for hospitals: {e}")
         
@@ -181,8 +203,7 @@ def get_safety_information(location: str, activity_type: str = "mountain_biking"
                     # Extract safety information from search results
                     for result in results[:3]:
                         content = result.get("content", "").lower()
-                        title = result.get("title", "").lower()
-                        
+
                         # Common safety tips
                         if "water" in content and ("carry" in content or "bring" in content):
                             safety_tips.append("Carry plenty of water")
@@ -277,8 +298,7 @@ def check_wildlife_alerts(location: str) -> str:
                     # Extract wildlife information
                     for result in results[:3]:
                         content = result.get("content", "").lower()
-                        title = result.get("title", "").lower()
-                        
+
                         # Check for alerts
                         if "alert" in content or "warning" in content:
                             if "bear" in content:
@@ -350,22 +370,18 @@ def get_avalanche_forecast(location: str) -> str:
         
         # Use National Weather Service API for avalanche forecast
         # NWS doesn't have a direct avalanche API, but we can check for winter weather alerts
-        try:
+        def _check_nws_winter_alerts() -> list:
+            """Check NWS for winter weather alerts."""
             with httpx.Client() as client:
-                # Get forecast zone (simplified - NWS uses zones, not direct lat/lon)
-                # For Arizona, avalanche risk is generally low, but we'll check for winter weather
-                url = f"https://api.weather.gov/alerts/active"
+                url = "https://api.weather.gov/alerts/active"
                 headers = {"User-Agent": "AdventureAgent/1.0"}
-                params = {
-                    "point": f"{lat},{lon}",
-                }
-                
+                params = {"point": f"{lat},{lon}"}
+
                 response = client.get(url, headers=headers, params=params, timeout=10.0)
                 if response.status_code == 200:
                     data = response.json()
                     features = data.get("features", [])
-                    
-                    # Check for winter weather alerts
+
                     winter_alerts = []
                     for feature in features:
                         properties = feature.get("properties", {})
@@ -376,15 +392,26 @@ def get_avalanche_forecast(location: str) -> str:
                                 "headline": properties.get("headline", ""),
                                 "description": properties.get("description", "")[:200],
                             })
-                    
-                    if winter_alerts:
-                        return json.dumps({
-                            "location": location,
-                            "avalanche_danger": "Check current conditions",
-                            "forecast": "Winter weather alerts active - check avalanche conditions",
-                            "alerts": winter_alerts,
-                            "source": "nws",
-                        })
+                    return winter_alerts
+                return []
+
+        try:
+            # Cache NWS winter alerts for 1 hour (weather conditions change)
+            winter_alerts = cached_api_call(
+                endpoint="nws_alerts",
+                params={"lat": lat, "lon": lon, "type": "winter"},
+                api_func=_check_nws_winter_alerts,
+                ttl=3600.0,  # 1 hour
+            )
+
+            if winter_alerts:
+                return json.dumps({
+                    "location": location,
+                    "avalanche_danger": "Check current conditions",
+                    "forecast": "Winter weather alerts active - check avalanche conditions",
+                    "alerts": winter_alerts,
+                    "source": "nws",
+                })
         except Exception as e:
             print(f"NWS API error for avalanche forecast: {e}")
         
@@ -450,9 +477,9 @@ def get_river_conditions(location: str) -> str:
             raise ValueError("Could not get coordinates for location")
         
         # Use USGS Water Services API for river conditions
-        try:
+        def _get_usgs_streamflow() -> dict | None:
+            """Get streamflow data from USGS Water Services."""
             with httpx.Client() as client:
-                # Find nearby stream gauges
                 url = "https://waterservices.usgs.gov/nwis/iv/"
                 params = {
                     "format": "json",
@@ -460,43 +487,58 @@ def get_river_conditions(location: str) -> str:
                     "parameterCd": "00060",  # Streamflow
                     "siteType": "ST",  # Stream
                 }
-                
+
                 response = client.get(url, params=params, timeout=10.0)
                 if response.status_code == 200:
                     data = response.json()
                     time_series = data.get("value", {}).get("timeSeries", [])
-                    
+
                     if time_series:
-                        # Get the first stream gauge data
                         series = time_series[0]
                         values = series.get("values", [{}])[0].get("value", [])
                         if values:
-                            flow_value = float(values[0].get("value", 0))
-                            unit = series.get("variable", {}).get("unit", {}).get("unitCode", "")
-                            
-                            # Determine conditions based on flow
-                            if flow_value < 100:
-                                river_conditions = "Safe for crossing"
-                                water_level = "Low"
-                                flow_rate = "Low"
-                            elif flow_value < 500:
-                                river_conditions = "Moderate - use caution"
-                                water_level = "Normal"
-                                flow_rate = "Moderate"
-                            else:
-                                river_conditions = "Dangerous - do not cross"
-                                water_level = "High"
-                                flow_rate = "High"
-                            
-                            return json.dumps({
-                                "location": location,
-                                "river_conditions": river_conditions,
-                                "water_level": water_level,
-                                "flow_rate": flow_rate,
-                                "flow_value": flow_value,
-                                "unit": unit,
-                                "source": "usgs",
-                            })
+                            return {
+                                "flow_value": float(values[0].get("value", 0)),
+                                "unit": series.get("variable", {}).get("unit", {}).get("unitCode", ""),
+                            }
+                return None
+
+        try:
+            # Cache USGS streamflow for 2 hours (river conditions change with weather)
+            usgs_data = cached_api_call(
+                endpoint="usgs_streamflow",
+                params={"lat": lat, "lon": lon},
+                api_func=_get_usgs_streamflow,
+                ttl=7200.0,  # 2 hours
+            )
+
+            if usgs_data:
+                flow_value = usgs_data["flow_value"]
+                unit = usgs_data["unit"]
+
+                # Determine conditions based on flow
+                if flow_value < 100:
+                    river_conditions = "Safe for crossing"
+                    water_level = "Low"
+                    flow_rate = "Low"
+                elif flow_value < 500:
+                    river_conditions = "Moderate - use caution"
+                    water_level = "Normal"
+                    flow_rate = "Moderate"
+                else:
+                    river_conditions = "Dangerous - do not cross"
+                    water_level = "High"
+                    flow_rate = "High"
+
+                return json.dumps({
+                    "location": location,
+                    "river_conditions": river_conditions,
+                    "water_level": water_level,
+                    "flow_rate": flow_rate,
+                    "flow_value": flow_value,
+                    "unit": unit,
+                    "source": "usgs",
+                })
         except Exception as e:
             print(f"USGS API error for river conditions: {e}")
         
@@ -635,6 +677,237 @@ def assess_route_safety(
             "Good cell coverage",
         ],
         "recommendations": ["Travel with a partner", "Bring emergency supplies"],
+        "source": "placeholder",
+    })
+
+
+@tool
+def get_weather_alerts(location: str) -> str:
+    """Get active weather alerts for a location from NWS.
+
+    Args:
+        location: Location name or region
+
+    Returns:
+        JSON string with active weather alerts
+    """
+    try:
+        # Get coordinates for location
+        coord_result = get_coordinates.invoke({"location_name": location})
+        coord_data = json.loads(coord_result)
+        lat = coord_data.get("coordinates", {}).get("lat")
+        lon = coord_data.get("coordinates", {}).get("lon")
+
+        if not lat or not lon:
+            raise ValueError("Could not get coordinates for location")
+
+        def _get_nws_alerts() -> List[dict]:
+            """Fetch active alerts from NWS API."""
+            with httpx.Client() as client:
+                url = "https://api.weather.gov/alerts/active"
+                headers = {"User-Agent": "AdventureAgent/1.0"}
+                params = {"point": f"{lat},{lon}"}
+
+                response = client.get(url, headers=headers, params=params, timeout=10.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    features = data.get("features", [])
+
+                    alerts = []
+                    for feature in features[:10]:  # Limit to 10 alerts
+                        properties = feature.get("properties", {})
+                        alerts.append({
+                            "event": properties.get("event", ""),
+                            "severity": properties.get("severity", ""),
+                            "urgency": properties.get("urgency", ""),
+                            "headline": properties.get("headline", ""),
+                            "description": properties.get("description", "")[:300],
+                            "instruction": properties.get("instruction", "")[:200] if properties.get("instruction") else None,
+                            "effective": properties.get("effective", ""),
+                            "expires": properties.get("expires", ""),
+                        })
+                    return alerts
+                return []
+
+        try:
+            # Cache NWS alerts for 30 minutes (alerts are time-sensitive)
+            alerts = cached_api_call(
+                endpoint="nws_alerts",
+                params={"lat": lat, "lon": lon, "type": "all"},
+                api_func=_get_nws_alerts,
+                ttl=1800.0,  # 30 minutes
+            )
+
+            if alerts:
+                # Categorize alerts by severity
+                severe_alerts = [a for a in alerts if a.get("severity") in ["Extreme", "Severe"]]
+                moderate_alerts = [a for a in alerts if a.get("severity") == "Moderate"]
+                minor_alerts = [a for a in alerts if a.get("severity") in ["Minor", "Unknown"]]
+
+                return json.dumps({
+                    "location": location,
+                    "total_alerts": len(alerts),
+                    "severe_alerts": severe_alerts,
+                    "moderate_alerts": moderate_alerts,
+                    "minor_alerts": minor_alerts,
+                    "all_alerts": alerts,
+                    "source": "nws",
+                })
+            else:
+                return json.dumps({
+                    "location": location,
+                    "total_alerts": 0,
+                    "severe_alerts": [],
+                    "moderate_alerts": [],
+                    "minor_alerts": [],
+                    "all_alerts": [],
+                    "message": "No active weather alerts",
+                    "source": "nws",
+                })
+        except Exception as e:
+            print(f"NWS API error for weather alerts: {e}")
+    except Exception as e:
+        print(f"Weather alerts error for {location}: {e}")
+
+    # Fallback to placeholder data
+    return json.dumps({
+        "location": location,
+        "total_alerts": 0,
+        "severe_alerts": [],
+        "moderate_alerts": [],
+        "minor_alerts": [],
+        "all_alerts": [],
+        "message": "Unable to fetch weather alerts",
+        "source": "placeholder",
+    })
+
+
+@tool
+def check_earthquake_activity(location: str, days: int = 7, min_magnitude: float = 2.5) -> str:
+    """Check for recent earthquake activity near a location using USGS.
+
+    Args:
+        location: Location name or region
+        days: Number of days to look back (default: 7)
+        min_magnitude: Minimum earthquake magnitude to report (default: 2.5)
+
+    Returns:
+        JSON string with earthquake activity
+    """
+    try:
+        # Get coordinates for location
+        coord_result = get_coordinates.invoke({"location_name": location})
+        coord_data = json.loads(coord_result)
+        lat = coord_data.get("coordinates", {}).get("lat")
+        lon = coord_data.get("coordinates", {}).get("lon")
+
+        if not lat or not lon:
+            raise ValueError("Could not get coordinates for location")
+
+        def _get_usgs_earthquakes() -> dict:
+            """Fetch earthquake data from USGS API."""
+            import datetime
+
+            with httpx.Client() as client:
+                # USGS Earthquake API
+                url = "https://earthquake.usgs.gov/fdsnws/event/1/query"
+
+                # Calculate date range
+                end_time = datetime.datetime.now(datetime.UTC)
+                start_time = end_time - datetime.timedelta(days=days)
+
+                params = {
+                    "format": "geojson",
+                    "starttime": start_time.strftime("%Y-%m-%d"),
+                    "endtime": end_time.strftime("%Y-%m-%d"),
+                    "latitude": lat,
+                    "longitude": lon,
+                    "maxradiuskm": 200,  # 200km radius
+                    "minmagnitude": min_magnitude,
+                    "orderby": "magnitude",
+                }
+
+                response = client.get(url, params=params, timeout=15.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    features = data.get("features", [])
+
+                    earthquakes = []
+                    for feature in features[:20]:  # Limit to 20 earthquakes
+                        properties = feature.get("properties", {})
+                        geometry = feature.get("geometry", {})
+                        coords = geometry.get("coordinates", [])
+
+                        earthquakes.append({
+                            "magnitude": properties.get("mag"),
+                            "place": properties.get("place", ""),
+                            "time": properties.get("time"),
+                            "depth_km": coords[2] if len(coords) > 2 else None,
+                            "type": properties.get("type", ""),
+                            "url": properties.get("url", ""),
+                        })
+
+                    return {
+                        "earthquakes": earthquakes,
+                        "count": len(earthquakes),
+                        "metadata": data.get("metadata", {}),
+                    }
+                return {"earthquakes": [], "count": 0}
+
+        try:
+            # Cache earthquake data for 1 hour
+            usgs_data = cached_api_call(
+                endpoint="usgs_earthquake",
+                params={"lat": lat, "lon": lon, "days": days, "min_mag": min_magnitude},
+                api_func=_get_usgs_earthquakes,
+                ttl=3600.0,  # 1 hour
+            )
+
+            earthquakes = usgs_data.get("earthquakes", [])
+            count = usgs_data.get("count", 0)
+
+            # Assess seismic risk
+            if count == 0:
+                seismic_risk = "Low"
+                advisory = "No significant seismic activity detected"
+            elif any(eq.get("magnitude", 0) >= 5.0 for eq in earthquakes):
+                seismic_risk = "High"
+                advisory = "Significant earthquake activity - check local conditions"
+            elif count > 5:
+                seismic_risk = "Moderate"
+                advisory = "Elevated seismic activity in area"
+            else:
+                seismic_risk = "Low"
+                advisory = "Minor seismic activity detected"
+
+            # Get significant earthquakes (magnitude >= 4.0)
+            significant = [eq for eq in earthquakes if eq.get("magnitude", 0) >= 4.0]
+
+            return json.dumps({
+                "location": location,
+                "seismic_risk": seismic_risk,
+                "advisory": advisory,
+                "total_earthquakes": count,
+                "significant_earthquakes": significant,
+                "recent_earthquakes": earthquakes[:5],  # Top 5 by magnitude
+                "search_radius_km": 200,
+                "time_period_days": days,
+                "min_magnitude": min_magnitude,
+                "source": "usgs",
+            })
+        except Exception as e:
+            print(f"USGS Earthquake API error: {e}")
+    except Exception as e:
+        print(f"Earthquake activity error for {location}: {e}")
+
+    # Fallback to placeholder data
+    return json.dumps({
+        "location": location,
+        "seismic_risk": "Unknown",
+        "advisory": "Unable to fetch earthquake data",
+        "total_earthquakes": 0,
+        "significant_earthquakes": [],
+        "recent_earthquakes": [],
         "source": "placeholder",
     })
 

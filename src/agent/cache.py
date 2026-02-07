@@ -317,6 +317,18 @@ def get_rate_limiter(endpoint: str) -> RateLimiter:
                 max_calls_per_second=2.0,
                 max_calls_per_minute=60.0,
             )
+        elif endpoint == "nws_alerts":
+            # NWS API: public, be conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=1.0,
+                max_calls_per_minute=30.0,
+            )
+        elif endpoint in ("usgs_streamflow", "usgs_earthquake"):
+            # USGS APIs: public, be conservative
+            _rate_limiters[endpoint] = RateLimiter(
+                max_calls_per_second=2.0,
+                max_calls_per_minute=60.0,
+            )
         else:
             # Default conservative limits
             _rate_limiters[endpoint] = RateLimiter(
