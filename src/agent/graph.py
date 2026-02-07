@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import warnings
 from typing import Any, Dict, List, Literal
+
+# Module-level logger for performance (avoid repeated getLogger calls in hot paths)
+logger = logging.getLogger(__name__)
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, RetryPolicy, interrupt
@@ -12,6 +16,13 @@ from typing_extensions import TypedDict
 
 from agent.archive import archive_plan
 from agent.config import Config
+from agent.utils import (
+    create_agent_node,
+    extract_activity_type,
+    extract_context,
+    extract_location,
+    extract_route_info,
+)
 
 # Suppress known non-critical warnings
 # LangSmith UUID v7 warning: This is a deprecation warning from LangChain's internal
@@ -25,8 +36,6 @@ warnings.filterwarnings(
 from agent.error_handling import (
     ErrorCategory,
     ErrorType,
-    is_llm_recoverable_error,
-    is_user_fixable_error,
 )
 
 # Checkpointing configuration
@@ -417,21 +426,13 @@ async def orchestrator_node(state: AdventureState) -> Dict[str, Any]:
 async def geo_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
     """Geo agent node - provides geographic information."""
     try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("geo_agent", user_input)
-        
-        # Extract location from user input or preferences
-        user_prefs = state.get("user_preferences")
-        location = user_prefs.get("region", "") if user_prefs else ""
-        if not location:
-            # Try to extract from user input
-            location = user_input.split()[0] if user_input else "Unknown"
+        context = extract_context(state, "geo_agent")
+        location = extract_location(state, default="Unknown")
 
-        # Add timeout to prevent hanging (30 seconds for geo lookup)
+        # Add timeout to prevent hanging
         geo_info = await asyncio.wait_for(
             geo_agent.get_location_info(location, context),
-            timeout=30.0
+            timeout=Config.get_timeout("geo_agent"),
         )
 
         return {
@@ -439,7 +440,6 @@ async def geo_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Lite
             "completed_agents": ["geo_agent"],
         }
     except TimeoutError:
-        logger = logging.getLogger(__name__)
         logger.warning(f"Geo agent timed out for location: {location}")
         return {
             "geo_info": {"location": location, "error": "timeout"},
@@ -458,21 +458,10 @@ async def geo_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Lite
 async def trail_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
     """Trail agent node - provides trail information for multiple activity types."""
     try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("trail_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-
-        # Get activity type from preferences or default to mountain_biking
-        activity_type = "mountain_biking"
+        context = extract_context(state, "trail_agent")
+        location = extract_location(state)
         user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
+        activity_type = extract_activity_type(user_prefs)
         
         # Map skill level to difficulty based on activity type
         difficulty = None
@@ -494,10 +483,10 @@ async def trail_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Li
                 }
             difficulty = skill_to_difficulty.get(skill_level)
 
-        # Add timeout to prevent hanging (45 seconds for trail search + LLM enhancement)
+        # Add timeout to prevent hanging
         trails = await asyncio.wait_for(
             trail_agent.search_trails(location, activity_type, difficulty, None, context),
-            timeout=45.0
+            timeout=Config.get_timeout("trail_agent"),
         )
 
         return {
@@ -505,7 +494,6 @@ async def trail_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Li
             "completed_agents": ["trail_agent"],
         }
     except TimeoutError:
-        logger = logging.getLogger(__name__)
         logger.warning(f"Trail agent timed out for location: {location}")
         return {
             "trail_info": [],
@@ -521,417 +509,177 @@ async def trail_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Li
         return error_result
 
 
-async def blm_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """BLM agent node - provides BLM land information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("blm_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        region = geo_info.get("region", "") if geo_info else ""
-        if not region:
-            user_prefs = state.get("user_preferences")
-            region = user_prefs.get("region", "") if user_prefs else ""
-
-        user_prefs = state.get("user_preferences")
-        activity_type = user_prefs.get("adventure_type", "mountain_biking") if user_prefs else "mountain_biking"
-
-        blm_info = await blm_agent.get_blm_information(region, activity_type, context)
-
-        return {
-            "blm_info": blm_info,
-            "completed_agents": ["blm_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "blm_agent", state, [])
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["blm_info"] = []
-        return error_result
+async def _invoke_blm(state: AdventureState, context: str) -> Any:
+    """Invoke BLM agent."""
+    region = extract_location(state)
+    activity_type = extract_activity_type(state.get("user_preferences"))
+    return await blm_agent.get_blm_information(region, activity_type, context)
 
 
-async def accommodation_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Accommodation agent node - finds accommodations."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("accommodation_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-
-        user_prefs = state.get("user_preferences")
-        acc_type = None
-        if user_prefs:
-            acc_type = user_prefs.get("accommodation_preference", "camping")
-
-        accommodations = await accommodation_agent.find_accommodations(
-            location, acc_type, None, None, context
-        )
-
-        return {
-            "accommodation_info": accommodations,
-            "completed_agents": ["accommodation_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "accommodation_agent", state, [])
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["accommodation_info"] = []
-        return error_result
+blm_agent_node = create_agent_node("blm_agent", "blm_info", _invoke_blm, fallback_value=[])
 
 
-async def gear_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Gear agent node - recommends gear and products."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("gear_agent", user_input)
-        
-        # Get activity type, fallback to adventure_type for backward compatibility
-        activity_type = "mountain_biking"
-        user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-        duration = user_prefs.get("duration_days", 1) if user_prefs else 1
-        skill_level = user_prefs.get("skill_level", "intermediate") if user_prefs else "intermediate"
-        gear_owned = user_prefs.get("gear_owned", []) if user_prefs else []
-
-        gear_recs = await gear_agent.recommend_gear_for_adventure(
-            activity_type, duration, skill_level, gear_owned, context
-        )
-
-        return {
-            "gear_recommendations": gear_recs,
-            "completed_agents": ["gear_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "gear_agent", state, [])
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["gear_recommendations"] = []
-        return error_result
+async def _invoke_accommodation(state: AdventureState, context: str) -> Any:
+    """Invoke accommodation agent."""
+    location = extract_location(state)
+    user_prefs = state.get("user_preferences")
+    acc_type = user_prefs.get("accommodation_preference", "camping") if user_prefs else None
+    return await accommodation_agent.find_accommodations(location, acc_type, None, None, context)
 
 
-async def planning_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Planning agent node - creates detailed itinerary."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("planning_agent", user_input)
-        
-        trail_info = state.get("trail_info", [])
-        trails = [dict(t) for t in trail_info] if trail_info else []
-        geo_info = state.get("geo_info")
-        start_location = geo_info.get("location", "") if geo_info else ""
-        user_prefs = state.get("user_preferences")
-        duration = user_prefs.get("duration_days", 1) if user_prefs else 1
-
-        planning_info = await planning_agent.create_adventure_itinerary(
-            trails, start_location, duration, user_prefs, context
-        )
-
-        return {
-            "planning_info": planning_info,
-            "completed_agents": ["planning_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "planning_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["planning_info"] = None
-        return error_result
+accommodation_agent_node = create_agent_node(
+    "accommodation_agent", "accommodation_info", _invoke_accommodation, fallback_value=[]
+)
 
 
-async def weather_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Weather agent node - provides weather and conditions information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("weather_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        activity_type = "mountain_biking"
-        user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-        
-        dates = user_prefs.get("dates", []) if user_prefs else None
-
-        weather_info = await weather_agent.get_weather_info(location, dates, activity_type, context)
-
-        return {
-            "weather_info": weather_info,
-            "completed_agents": ["weather_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "weather_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["weather_info"] = None
-        return error_result
+async def _invoke_gear(state: AdventureState, context: str) -> Any:
+    """Invoke gear agent."""
+    user_prefs = state.get("user_preferences")
+    activity_type = extract_activity_type(user_prefs)
+    duration = user_prefs.get("duration_days", 1) if user_prefs else 1
+    skill_level = user_prefs.get("skill_level", "intermediate") if user_prefs else "intermediate"
+    gear_owned = user_prefs.get("gear_owned", []) if user_prefs else []
+    return await gear_agent.recommend_gear_for_adventure(
+        activity_type, duration, skill_level, gear_owned, context
+    )
 
 
-async def permits_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Permits agent node - provides permit and regulation information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("permits_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        activity_type = "mountain_biking"
-        user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-        
-        group_size = user_prefs.get("group_size", 1) if user_prefs else 1
-        dates = user_prefs.get("dates", []) if user_prefs else None
-
-        permits_info = await permits_agent.get_permit_info(location, activity_type, group_size, dates, context)
-
-        return {
-            "permits_info": permits_info,
-            "completed_agents": ["permits_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "permits_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["permits_info"] = None
-        return error_result
+gear_agent_node = create_agent_node(
+    "gear_agent", "gear_recommendations", _invoke_gear, fallback_value=[]
+)
 
 
-async def safety_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Safety agent node - provides safety and emergency information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("safety_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        activity_type = "mountain_biking"
-        user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-        
-        trail_info = state.get("trail_info", [])
-        route_info = {
-            "trails": [dict(t) for t in trail_info] if trail_info else [],
-            "activity_type": activity_type,
-        }
-
-        safety_info = await safety_agent.get_safety_info(location, activity_type, route_info, context)
-
-        return {
-            "safety_info": safety_info,
-            "completed_agents": ["safety_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "safety_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["safety_info"] = None
-        return error_result
+async def _invoke_planning(state: AdventureState, context: str) -> Any:
+    """Invoke planning agent."""
+    start_location = extract_location(state)
+    trail_info = state.get("trail_info", [])
+    trails = [dict(t) for t in trail_info] if trail_info else []
+    user_prefs = state.get("user_preferences")
+    duration = user_prefs.get("duration_days", 1) if user_prefs else 1
+    return await planning_agent.create_adventure_itinerary(
+        trails, start_location, duration, user_prefs, context
+    )
 
 
-async def transportation_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Transportation agent node - provides transportation and logistics information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("transportation_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        user_prefs = state.get("user_preferences")
-        route_type = user_prefs.get("route_type") if user_prefs else None
-
-        transportation_info = await transportation_agent.get_transportation_info(location, None, route_type, context)
-
-        return {
-            "transportation_info": transportation_info,
-            "completed_agents": ["transportation_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "transportation_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["transportation_info"] = None
-        return error_result
+planning_agent_node = create_agent_node(
+    "planning_agent", "planning_info", _invoke_planning, fallback_value=None
+)
 
 
-async def food_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Food agent node - provides food and resupply information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("food_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        trail_info = state.get("trail_info", [])
-        route_info = {
-            "trails": [dict(t) for t in trail_info] if trail_info else [],
-        }
-        user_prefs = state.get("user_preferences")
-        duration_days = user_prefs.get("duration_days", 1) if user_prefs else 1
-
-        food_info = await food_agent.get_food_info(location, route_info, duration_days, context)
-
-        return {
-            "food_info": food_info,
-            "completed_agents": ["food_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "food_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["food_info"] = None
-        return error_result
+async def _invoke_weather(state: AdventureState, context: str) -> Any:
+    """Invoke weather agent."""
+    location = extract_location(state)
+    user_prefs = state.get("user_preferences")
+    activity_type = extract_activity_type(user_prefs)
+    dates = user_prefs.get("dates", []) if user_prefs else None
+    return await weather_agent.get_weather_info(location, dates, activity_type, context)
 
 
-async def community_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Community agent node - provides community and social information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("community_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        activity_type = "mountain_biking"
-        user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-
-        community_info = await community_agent.get_community_info(location, activity_type, context)
-
-        return {
-            "community_info": community_info,
-            "completed_agents": ["community_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "community_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["community_info"] = None
-        return error_result
+weather_agent_node = create_agent_node(
+    "weather_agent", "weather_info", _invoke_weather, fallback_value=None
+)
 
 
-async def photography_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Photography agent node - provides photography and media information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("photography_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        trail_info = state.get("trail_info", [])
-        route_info = {
-            "trails": [dict(t) for t in trail_info] if trail_info else [],
-        }
-
-        photography_info = await photography_agent.get_photography_info(location, route_info, context)
-
-        return {
-            "photography_info": photography_info,
-            "completed_agents": ["photography_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "photography_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["photography_info"] = None
-        return error_result
+async def _invoke_permits(state: AdventureState, context: str) -> Any:
+    """Invoke permits agent."""
+    location = extract_location(state)
+    user_prefs = state.get("user_preferences")
+    activity_type = extract_activity_type(user_prefs)
+    group_size = user_prefs.get("group_size", 1) if user_prefs else 1
+    dates = user_prefs.get("dates", []) if user_prefs else None
+    return await permits_agent.get_permit_info(location, activity_type, group_size, dates, context)
 
 
-async def historical_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
-    """Historical agent node - provides historical and cultural information."""
-    try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("historical_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        trail_info = state.get("trail_info", [])
-        route_info = {
-            "trails": [dict(t) for t in trail_info] if trail_info else [],
-        }
+permits_agent_node = create_agent_node(
+    "permits_agent", "permits_info", _invoke_permits, fallback_value=None
+)
 
-        historical_info = await historical_agent.get_historical_info(location, route_info, context)
 
-        return {
-            "historical_info": historical_info,
-            "completed_agents": ["historical_agent"],
-        }
-    except Exception as e:
-        error_result = handle_agent_error(e, "historical_agent", state, None)
-        if isinstance(error_result, Command):
-            return error_result
-        error_result["historical_info"] = None
-        return error_result
+async def _invoke_safety(state: AdventureState, context: str) -> Any:
+    """Invoke safety agent."""
+    location = extract_location(state)
+    activity_type = extract_activity_type(state.get("user_preferences"))
+    route_info = extract_route_info(state)
+    route_info["activity_type"] = activity_type
+    return await safety_agent.get_safety_info(location, activity_type, route_info, context)
+
+
+safety_agent_node = create_agent_node(
+    "safety_agent", "safety_info", _invoke_safety, fallback_value=None
+)
+
+
+async def _invoke_transportation(state: AdventureState, context: str) -> Any:
+    """Invoke transportation agent."""
+    location = extract_location(state)
+    user_prefs = state.get("user_preferences")
+    route_type = user_prefs.get("route_type") if user_prefs else None
+    return await transportation_agent.get_transportation_info(location, None, route_type, context)
+
+
+transportation_agent_node = create_agent_node(
+    "transportation_agent", "transportation_info", _invoke_transportation, fallback_value=None
+)
+
+
+async def _invoke_food(state: AdventureState, context: str) -> Any:
+    """Invoke food agent."""
+    location = extract_location(state)
+    route_info = extract_route_info(state)
+    user_prefs = state.get("user_preferences")
+    duration_days = user_prefs.get("duration_days", 1) if user_prefs else 1
+    return await food_agent.get_food_info(location, route_info, duration_days, context)
+
+
+food_agent_node = create_agent_node(
+    "food_agent", "food_info", _invoke_food, fallback_value=None
+)
+
+
+async def _invoke_community(state: AdventureState, context: str) -> Any:
+    """Invoke community agent."""
+    location = extract_location(state)
+    activity_type = extract_activity_type(state.get("user_preferences"))
+    return await community_agent.get_community_info(location, activity_type, context)
+
+
+community_agent_node = create_agent_node(
+    "community_agent", "community_info", _invoke_community, fallback_value=None
+)
+
+
+async def _invoke_photography(state: AdventureState, context: str) -> Any:
+    """Invoke photography agent."""
+    location = extract_location(state)
+    route_info = extract_route_info(state)
+    return await photography_agent.get_photography_info(location, route_info, context)
+
+
+photography_agent_node = create_agent_node(
+    "photography_agent", "photography_info", _invoke_photography, fallback_value=None
+)
+
+
+async def _invoke_historical(state: AdventureState, context: str) -> Any:
+    """Invoke historical agent."""
+    location = extract_location(state)
+    route_info = extract_route_info(state)
+    return await historical_agent.get_historical_info(location, route_info, context)
+
+
+historical_agent_node = create_agent_node(
+    "historical_agent", "historical_info", _invoke_historical, fallback_value=None
+)
 
 
 async def route_planning_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
     """Route planning agent node - provides route planning information from RideWithGPS and Strava."""
     try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("route_planning_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
-        activity_type = "mountain_biking"
+        context = extract_context(state, "route_planning_agent")
+        location = extract_location(state)
         user_prefs = state.get("user_preferences")
-        if user_prefs:
-            activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
-        
+        activity_type = extract_activity_type(user_prefs)
+
         distance = None
         if user_prefs:
             distance_pref = user_prefs.get("distance_preference")
@@ -984,16 +732,8 @@ async def route_planning_agent_node(state: AdventureState) -> Dict[str, Any] | C
 async def bikepacking_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
     """Bikepacking agent node - provides bikepacking route information."""
     try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("bikepacking_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
+        context = extract_context(state, "bikepacking_agent")
+        location = extract_location(state)
         user_prefs = state.get("user_preferences")
         route_type = user_prefs.get("route_type") if user_prefs else None
         duration_days = user_prefs.get("duration_days", 1) if user_prefs else None
@@ -1037,16 +777,8 @@ async def bikepacking_agent_node(state: AdventureState) -> Dict[str, Any] | Comm
 async def advocacy_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
     """Advocacy agent node - provides trail advocacy and long-distance route information."""
     try:
-        agent_context = state.get("agent_context", {})
-        user_input = state.get("user_input", "")
-        context = agent_context.get("advocacy_agent", user_input)
-        
-        geo_info = state.get("geo_info")
-        location = geo_info.get("location", "") if geo_info else ""
-        if not location:
-            user_prefs = state.get("user_preferences")
-            location = user_prefs.get("region", "") if user_prefs else ""
-        
+        context = extract_context(state, "advocacy_agent")
+        location = extract_location(state)
         user_prefs = state.get("user_preferences")
         route_type = user_prefs.get("route_type") if user_prefs else None
 
@@ -1094,34 +826,20 @@ async def advocacy_agent_node(state: AdventureState) -> Dict[str, Any] | Command
 
 def create_location_agent_node(agent_name: str, agent_instance: LocationAgentBase):
     """Create a node function for a location agent.
-    
+
     Args:
         agent_name: Name of the agent (e.g., "jerome_agent")
         agent_instance: Instance of the location agent
-    
+
     Returns:
         Node function for the location agent
     """
     async def location_agent_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
         """Location agent node - provides location-specific information."""
         try:
-            agent_context = state.get("agent_context", {})
-            user_input = state.get("user_input", "")
-            context = agent_context.get(agent_name, user_input)
-            
-            geo_info = state.get("geo_info")
-            location = geo_info.get("location", "") if geo_info else ""
-            if not location:
-                user_prefs = state.get("user_preferences")
-                location = user_prefs.get("region", "") if user_prefs else ""
-            if not location:
-                location = user_input
-            
-            # Get activity type from preferences
-            activity_type = "mountain_biking"
-            user_prefs = state.get("user_preferences")
-            if user_prefs:
-                activity_type = user_prefs.get("activity_type") or user_prefs.get("adventure_type", "mountain_biking")
+            context = extract_context(state, agent_name)
+            location = extract_location(state) or state.get("user_input", "")
+            activity_type = extract_activity_type(state.get("user_preferences"))
             
             # Collect existing agent outputs to enhance
             existing_outputs = {
@@ -1195,10 +913,6 @@ async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
     
     Supports early synthesis with partial data to improve response times.
     """
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
     try:
         # Log state for debugging
         completed = state.get('completed_agents', [])
@@ -1227,14 +941,14 @@ async def synthesize_node(state: AdventureState) -> Dict[str, Any]:
             }
         
         # Include human feedback if this is a revision
-        # Reduced timeout to 45 seconds for faster failure (synthesis should be quick with truncated data)
+        synthesis_timeout = Config.get_timeout("synthesize")
         try:
             plan = await asyncio.wait_for(
                 orchestrator.synthesize_plan(state, human_feedback=state.get("human_feedback")),
-                timeout=45.0
+                timeout=synthesis_timeout,
             )
         except TimeoutError:
-            logger.error("Synthesize plan timed out after 45 seconds")
+            logger.error(f"Synthesize plan timed out after {synthesis_timeout} seconds")
             return {
                 "adventure_plan": {
                     "title": "Adventure Plan",
@@ -1344,10 +1058,6 @@ async def archive_node(state: AdventureState) -> Dict[str, Any]:
     
     Note: user_id and session_id can be added to state if needed for filtering.
     """
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
     # Only archive if we have a completed plan
     if state.get("adventure_plan"):
         try:
@@ -1440,10 +1150,6 @@ def route_to_agents(state: AdventureState) -> str | List[str]:
     IMPORTANT: Never returns None - always returns a valid string or list of strings.
     This prevents LangGraph visualization errors.
     """
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
     # Core agents that are essential for a basic plan
     CORE_AGENTS = {"geo_agent", "trail_agent", "weather_agent"}
     

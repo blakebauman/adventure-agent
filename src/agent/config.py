@@ -83,6 +83,44 @@ class Config:
         int(os.getenv("MAX_CONCURRENCY")) if os.getenv("MAX_CONCURRENCY") else None
     )
 
+    # Agent Timeouts (in seconds)
+    # Configure timeouts for agent operations to prevent hanging
+    # Can be overridden via environment variables: TIMEOUT_{AGENT_NAME}
+    TIMEOUT_DEFAULT: float = float(os.getenv("TIMEOUT_DEFAULT", "60.0"))
+    TIMEOUT_GEO_AGENT: float = float(os.getenv("TIMEOUT_GEO_AGENT", "30.0"))
+    TIMEOUT_TRAIL_AGENT: float = float(os.getenv("TIMEOUT_TRAIL_AGENT", "45.0"))
+    TIMEOUT_WEATHER_AGENT: float = float(os.getenv("TIMEOUT_WEATHER_AGENT", "30.0"))
+    TIMEOUT_SYNTHESIZE: float = float(os.getenv("TIMEOUT_SYNTHESIZE", "45.0"))
+
+    @classmethod
+    def get_timeout(cls, agent_name: str) -> float:
+        """Get the configured timeout for a specific agent.
+
+        Checks for agent-specific timeout first, then falls back to default.
+
+        Args:
+            agent_name: Name of the agent (e.g., "geo_agent", "trail_agent")
+
+        Returns:
+            Timeout in seconds
+        """
+        # Normalize agent name
+        normalized = agent_name.lower().replace("-", "_")
+        if not normalized.endswith("_agent") and normalized != "synthesize":
+            normalized = f"{normalized}_agent"
+
+        # Check for specific timeout attribute
+        attr_name = f"TIMEOUT_{normalized.upper()}"
+        if hasattr(cls, attr_name):
+            return getattr(cls, attr_name)
+
+        # Check environment variable
+        env_timeout = os.getenv(attr_name)
+        if env_timeout:
+            return float(env_timeout)
+
+        return cls.TIMEOUT_DEFAULT
+
     # Per-Agent Model Assignments
     # Maps agent names to model identifiers (e.g., "gpt-4o-mini", "claude-haiku-3")
     # Can be overridden via environment variables: AGENT_MODEL_{AGENT_NAME}

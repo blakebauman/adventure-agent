@@ -4,137 +4,180 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a multi-agent architecture with 17 specialized agents plus orchestrator to plan mountain bike adventures, bikepacking trips, and outdoor adventures across the US and Canada.
+Adventure Agent is an intelligent adventure planning system built with LangChain, LangGraph, and LangSmith. It uses a hub-and-spoke multi-agent architecture with 17+ specialized agents plus an orchestrator to plan mountain bike adventures, bikepacking trips, hiking, and trail running. Specializes in Arizona adventures with 28+ location-specific agents.
 
 ## Development Commands
 
 ### Setup & Dependencies
-- `uv venv` - Create virtual environment
-- `source .venv/bin/activate` - Activate virtual environment  
-- `uv pip install -e .` - Install project dependencies
-- `./run.sh install` - Install/update all dependencies including LangGraph CLI
+```bash
+uv venv && source .venv/bin/activate
+uv pip install -e .                    # Install project
+./run.sh install                       # Install all deps including LangGraph CLI
+```
 
 ### Development Server
-- `./run.sh dev` - Run LangGraph development server (default port 8123)
-- `./run.sh dev --port 8000` - Run with custom port
-- `./run.sh dev-tunnel` - Run with public tunnel (Cloudflare)
-- `langgraph dev` - Direct command (equivalent to ./run.sh dev)
+```bash
+./run.sh dev                           # Default port 8123
+./run.sh dev --port 8000               # Custom port
+./run.sh dev-tunnel                    # With public Cloudflare tunnel
+langgraph dev                          # Direct LangGraph API server
+```
 
 ### Testing
-- `./run.sh test` - Run all tests
-- `./run.sh test tests/unit_tests/` - Run unit tests only
-- `./run.sh test tests/integration_tests/` - Run integration tests only
-- `pytest` - Direct pytest command (after installing dev dependencies)
+```bash
+./run.sh test                          # All tests
+./run.sh test tests/unit_tests/        # Unit tests only
+./run.sh test tests/integration_tests/ # Integration tests only
+pytest tests/unit_tests/test_file.py   # Single test file
+pytest tests/unit_tests/test_file.py::test_name  # Single test
+```
 
-### Code Quality
-- `./run.sh lint` - Run ruff linting
-- `./run.sh typecheck` - Run MyPy type checking
-- `ruff check .` - Direct ruff command
-- `mypy src/` - Direct MyPy command
-
-### Important Development Notes
-- **ALWAYS run lint and typecheck after making changes** - Use `./run.sh lint` and `./run.sh typecheck` before committing
-- **Use uv for package management** - Never use pip directly, always use `uv pip install`
-- **Environment variables** - See Environment Setup section for required API keys
+### Code Quality (ALWAYS run before committing)
+```bash
+./run.sh lint                          # Ruff linting
+./run.sh typecheck                     # MyPy type checking
+ruff format .                          # Auto-format code
+```
 
 ### Build & Deploy
-- `./run.sh build` - Build Docker image via LangGraph
-- `./run.sh clean` - Clean build artifacts
-- `langgraph build` - Direct build command
+```bash
+./run.sh build                         # Build Docker image
+./run.sh clean                         # Clean build artifacts
+```
+
+**Package management**: Always use `uv pip install`, never use pip directly.
 
 ## Architecture Overview
 
-### Multi-Agent System
-The system uses a **hub-and-spoke architecture** with an Orchestrator agent managing 17 specialized agents:
+### Hub-and-Spoke Multi-Agent System
+The orchestrator (`src/agent/agents/orchestrator.py`) manages specialized agents:
 
-1. **Orchestrator Agent** (`src/agent/agents/orchestrator.py`) - Routes requests using LLM analysis and structured output (Pydantic models) for text-to-adventure generation
-2. **Core Planning**: Geo, Trail, Route Planning, Bikepacking, Planning agents
-3. **Land Management**: BLM, Advocacy, Permits agents  
-4. **Safety & Conditions**: Weather, Safety agents
-5. **Logistics**: Accommodation, Transportation, Food agents
-6. **Enhancement**: Gear, Photography, Community, Historical agents
+- **Core Planning**: Geo, Trail, Route Planning, Bikepacking, Planning
+- **Land Management**: BLM, Advocacy, Permits
+- **Safety & Conditions**: Weather, Safety
+- **Logistics**: Accommodation, Transportation, Food
+- **Enhancement**: Gear, Photography, Community, Historical
+- **Arizona Locations**: 28+ agents (Jerome, Sedona, Prescott, Flagstaff, Phoenix, Tucson, etc.)
 
-### Key Components
+### Key Files
 
-**State Management** (`src/agent/state.py`):
-- `AdventureState` - Main graph state with typed dictionaries
-- `UserPreferences` - User input preferences  
-- `AdventurePlan` - Final structured output
-- Additional fields: `route_planning_info`, `bikepacking_info`, `advocacy_info` for new agents
-
-**Graph Definition** (`src/agent/graph.py`):
-- StateGraph with conditional routing based on required agents
-- Priority-based agent execution order
-- Human-in-the-loop checkpoints for complex plans
-- Retry policies for external API calls
-
-**Configuration** (`src/agent/config.py`):
-- Environment-based configuration with .env support
-- Checkpointer configuration (memory/sqlite/postgres/none)
-- OpenAI, LangSmith, Tavily API settings
-- Default model: `gpt-4o-mini` (configurable via OPENAI_MODEL)
-- Temperature: 0.7 (configurable via OPENAI_TEMPERATURE)
-
-**Tools** (`src/agent/tools.py`):
-- 60+ tools for external integrations
-- Trail data from MTB Project, Hiking Project, Trail Run Project
-- Route planning from RideWithGPS, Strava
-- Bikepacking routes from Bikepacking.com, Bikepacking Roots
-- IMBA trail networks, Adventure Cycling Association routes
-- BLM lands, accommodations, weather, safety, gear recommendations
-
-### Text-to-Adventure Feature
-The system supports **natural language input processing**:
-- Users describe adventures in plain text
-- Orchestrator uses LLM + structured output to extract intent, activity type, location, duration, skill level
-- Automatically populates UserPreferences from extracted data
-- No need for structured JSON input - just describe your adventure
+| Component | File | Description |
+|-----------|------|-------------|
+| State | `src/agent/state.py` | `AdventureState`, `UserPreferences`, `AdventurePlan` TypedDicts |
+| Graph | `src/agent/graph.py` | StateGraph with conditional routing, parallel execution, entry point is `graph` |
+| Config | `src/agent/config.py` | Environment config, model settings, checkpointer |
+| Tools | `src/agent/tools.py` | 60+ tools for external integrations |
+| Agents | `src/agent/agents/` | All agent implementations |
 
 ### Agent Execution Flow
-1. Orchestrator analyzes user input and determines required agents
-2. Agents execute in priority order: geo → weather → permits → safety → trail → route_planning → bikepacking → blm → advocacy → transportation → accommodation → food → gear → community → planning → photography → historical
-3. Planning agent synthesizes all information into comprehensive itinerary
-4. Human review checkpoint (if needed for complex/expensive plans)
-5. Final adventure plan returned
+1. Orchestrator analyzes input using structured output → determines required agents
+2. **Parallel execution** of independent agents (dependencies tracked via `AGENT_DEPENDENCIES`)
+3. Priority order when sequential: geo → weather → permits → safety → trail → route_planning → bikepacking → blm → advocacy → transportation → accommodation → food → gear → community → planning → photography → historical
+4. Early synthesis when core agents (geo, trail, weather) complete
+5. Human review checkpoint (if complex/expensive)
+6. Archive and return final `AdventurePlan`
 
-### Specialized Agent Capabilities
-- **Route Planning Agent**: RideWithGPS routes, Strava community routes and segments
-- **Bikepacking Agent**: Multi-day bikepacking routes from Bikepacking.com and Bikepacking Roots
-- **Advocacy Agent**: IMBA trail networks, Adventure Cycling Association long-distance routes, trail access information
-
-### Testing Strategy
-- **Unit tests** (`tests/unit_tests/`) - Individual agent and component testing
-- **Integration tests** (`tests/integration_tests/`) - Full graph execution testing
-- Use pytest with fixtures for agent testing (`tests/conftest.py` configures asyncio backend)
-- Mock external APIs for consistent testing
-- Dev dependencies include pytest 8.3.5+ with anyio backend support
-
-### Key Dependencies
-- **LangGraph** - Multi-agent orchestration and state management
-- **LangChain** - LLM integrations and tools
-- **Pydantic** - Type-safe structured output from LLMs
-- **OpenAI** - Default LLM provider (gpt-4o-mini)
-- **Tavily** - Web search capabilities (optional)
-
-## Environment Setup
-
-Required environment variables:
-```bash
-OPENAI_API_KEY=your_key_here
-
-# Optional
-LANGSMITH_API_KEY=your_key_here  # For observability
-TAVILY_API_KEY=your_key_here     # For web search
-CHECKPOINTER_TYPE=memory         # memory/sqlite/postgres/none
+### Agent Node Pattern
+All agent nodes follow this structure:
+```python
+async def agent_name_node(state: AdventureState) -> Dict[str, Any] | Command[Literal["orchestrator"]]:
+    try:
+        context = state.get("agent_context", {}).get("agent_name", state.get("user_input", ""))
+        result = await agent.method(...)
+        return {
+            "agent_output": result,
+            "completed_agents": ["agent_name"],  # List with single item - merged via operator.add
+        }
+    except Exception as e:
+        # Use handle_agent_error for categorized error handling
+        error_result = handle_agent_error(e, "agent_name", state, fallback_value)
+        if isinstance(error_result, Command):
+            return error_result  # Routes to orchestrator for LLM-recoverable errors
+        error_result["agent_output"] = fallback_value
+        return error_result
 ```
 
-## Important Notes
+### State Management
+```python
+# State uses Annotated types with reducers for parallel execution
+completed_agents: Annotated[List[str], operator.add]  # Merges lists from parallel nodes
+error_details: Annotated[List[Dict[str, Any]], operator.add]
 
-- Main graph entry point: `src/agent/graph.py:graph`
-- Default model: `gpt-4o-mini` (configurable via OPENAI_MODEL)
-- Use uv for package management (not pip) - **Never use pip directly**
-- LangGraph API handles checkpointing automatically when deployed
-- Human-in-the-loop interrupts for plan review/approval
-- Graph uses priority-based agent execution with conditional routing
-- Retry policies implemented for external API calls (3 retries with exponential backoff)
-- All agent nodes have error handling and graceful fallbacks
+# Safe access patterns
+location = state.get("geo_info", {}).get("location", "") if state.get("geo_info") else ""
+
+# Activity type with backward compatibility
+activity = state.get("user_preferences", {}).get("activity_type") or \
+           state.get("user_preferences", {}).get("adventure_type", "mountain_biking")
+```
+
+### Structured Output with Pydantic
+Use `with_structured_output()` for type-safe LLM responses:
+```python
+from pydantic import BaseModel, Field
+
+class AnalysisModel(BaseModel):
+    activity_type: str = Field(description="Type of activity")
+    required_agents: List[str] = Field(description="Required agents")
+
+llm_structured = llm.with_structured_output(AnalysisModel)
+result = await llm_structured.ainvoke(messages)  # Returns AnalysisModel instance
+```
+
+### Location Agent Pattern
+Location agents extend `LocationAgentBase` and are created via factory:
+```python
+location_agent_node = create_location_agent_node("agent_name", agent_instance)
+register_location_agent(agent_instance)  # Register for dynamic lookup
+```
+
+### Activity Types & Skill Mapping
+- **Types**: `mountain_biking`, `hiking`, `trail_running`, `bikepacking`
+- **Skill levels**: beginner, intermediate, advanced, expert
+- **Difficulty mapping**:
+  - MTB: beginner→green, intermediate→blue, advanced→black, expert→double_black
+  - Hiking: beginner→easy, intermediate→intermediate, advanced→difficult, expert→expert
+
+## Configuration
+
+### Required Environment Variables
+```bash
+OPENAI_API_KEY=your_key_here
+# Or use Anthropic
+ANTHROPIC_API_KEY=your_key_here
+```
+
+### Optional Configuration
+```bash
+LANGSMITH_API_KEY=your_key_here       # Observability
+TAVILY_API_KEY=your_key_here          # Web search
+CHECKPOINTER_TYPE=memory              # memory/sqlite/postgres/none
+OPENAI_MODEL=gpt-4o-mini              # Default model
+OPENAI_TEMPERATURE=0.7                # Default temperature
+MAX_CONCURRENCY=10                    # Parallel agent execution limit
+
+# Agent Timeouts (seconds)
+TIMEOUT_DEFAULT=60.0                  # Default for all agents
+TIMEOUT_GEO_AGENT=30.0                # Geo lookups
+TIMEOUT_TRAIL_AGENT=45.0              # Trail search + LLM
+TIMEOUT_SYNTHESIZE=45.0               # Plan synthesis
+```
+
+### Per-Agent Model Configuration
+Override models for specific agents (see `docs/PER_AGENT_MODEL_ASSIGNMENT.md`):
+```bash
+AGENT_MODEL_ORCHESTRATOR=claude-sonnet-3.5  # High-complexity
+AGENT_MODEL_TRAIL=claude-haiku-3            # Medium-complexity
+AGENT_MODEL_GEO=gpt-4o-mini                 # Low-complexity
+```
+
+## Key Patterns
+
+- **Error handling**: Return empty/default values on errors, don't raise exceptions in agents. Use `handle_agent_error()` for categorized handling with Command-based recovery.
+- **Retry policies**: 3 retries with exponential backoff for external API calls via `RetryPolicy`
+- **Human-in-the-loop**: Use `interrupt()` for review checkpoints on complex plans
+- **Parallel execution**: Return agent lists from `route_to_agents()` for concurrent execution
+- **Tools**: Return JSON strings, use try/except, return empty results on failure
+- **State updates**: Return only changed fields, `completed_agents` uses reducer to merge parallel results
+- **Timeouts**: Use `asyncio.wait_for()` with `Config.get_timeout("agent_name")` for configurable timeouts
+- **Agent normalization**: Use `normalize_agent_name()` for consistent agent name handling
