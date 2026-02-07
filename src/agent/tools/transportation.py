@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from typing import List
 
 import httpx
 from langchain.tools import tool
 
+from agent.cache import cached_api_call
 from agent.config import Config
-from agent.tools.geo import get_coordinates, calculate_distance
+from agent.tools.geo import get_coordinates
 from agent.tools.web_search import WebSearchTool
 
 
@@ -36,7 +38,8 @@ def get_parking_information(location: str, trailhead: str | None = None) -> str:
         
         # Use Google Places API to find parking
         if Config.GOOGLE_PLACES_API_KEY:
-            try:
+            def _search_parking() -> List[dict]:
+                """Search for parking via Google Places API."""
                 with httpx.Client() as client:
                     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
                     params = {
@@ -45,47 +48,55 @@ def get_parking_information(location: str, trailhead: str | None = None) -> str:
                         "type": "parking",
                         "key": Config.GOOGLE_PLACES_API_KEY,
                     }
-                    
                     response = client.get(url, params=params, timeout=10.0)
                     if response.status_code == 200:
-                        data = response.json()
-                        places = data.get("results", [])
-                        
-                        if places:
-                            parking_place = places[0]
-                            parking_info = {
-                                "available": True,
-                                "spaces": "Check on arrival",
-                                "fee": "Varies",
-                                "restrictions": "Check posted signs",
-                                "location": parking_place.get("vicinity", location),
-                            }
-                            
-                            return json.dumps({
-                                "location": location,
-                                "trailhead": trailhead,
-                                "parking": parking_info,
-                                "source": "google_places",
-                            })
-            except Exception as e:
-                print(f"Google Places API error for parking: {e}")
-        
-        # Fallback: Use web search via Tavily
-        if Config.TAVILY_API_KEY:
+                        return response.json().get("results", [])[:5]
+                    return []
+
             try:
-                search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
-                query = f"{search_location} parking trailhead"
-                results = search_tool.search_web(query)
-                
-                if results:
+                # Cache parking search for 12 hours (parking locations don't change often)
+                places = cached_api_call(
+                    endpoint="google_places",
+                    params={"lat": lat, "lon": lon, "type": "parking"},
+                    api_func=_search_parking,
+                    ttl=43200.0,  # 12 hours
+                )
+
+                if places:
+                    parking_place = places[0]
                     parking_info = {
                         "available": True,
                         "spaces": "Check on arrival",
                         "fee": "Varies",
                         "restrictions": "Check posted signs",
+                        "location": parking_place.get("vicinity", location),
                     }
-                    
-                    # Extract parking information from search results
+
+                    return json.dumps({
+                        "location": location,
+                        "trailhead": trailhead,
+                        "parking": parking_info,
+                        "source": "google_places",
+                    })
+            except Exception as e:
+                print(f"Google Places API error for parking: {e}")
+        
+        # Fallback: Use web search via Tavily
+        if Config.TAVILY_API_KEY:
+            def _search_parking_web() -> dict:
+                """Search for parking info via Tavily."""
+                search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
+                query = f"{search_location} parking trailhead"
+                results = search_tool.search_web(query)
+
+                parking_info = {
+                    "available": True,
+                    "spaces": "Check on arrival",
+                    "fee": "Varies",
+                    "restrictions": "Check posted signs",
+                }
+
+                if results:
                     for result in results[:2]:
                         content = result.get("content", "").lower()
                         if "parking" in content:
@@ -94,13 +105,24 @@ def get_parking_information(location: str, trailhead: str | None = None) -> str:
                             if "overnight" in content and "no" in content:
                                 parking_info["restrictions"] = "No overnight parking"
                             break
-                    
-                    return json.dumps({
-                        "location": location,
-                        "trailhead": trailhead,
-                        "parking": parking_info,
-                        "source": "web_search",
-                    })
+
+                return parking_info
+
+            try:
+                # Cache parking web search for 6 hours
+                parking_info = cached_api_call(
+                    endpoint="tavily_parking",
+                    params={"location": search_location},
+                    api_func=_search_parking_web,
+                    ttl=21600.0,  # 6 hours
+                )
+
+                return json.dumps({
+                    "location": location,
+                    "trailhead": trailhead,
+                    "parking": parking_info,
+                    "source": "web_search",
+                })
             except Exception as e:
                 print(f"Web search error for parking: {e}")
     except Exception as e:
@@ -134,19 +156,19 @@ def find_shuttle_services(location: str, route_type: str | None = None) -> str:
     try:
         # Use web search via Tavily for shuttle services
         if Config.TAVILY_API_KEY:
-            try:
+            def _search_shuttle_services() -> List[dict]:
+                """Search for shuttle services via Tavily."""
                 search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
                 query = f"{location} shuttle service trailhead"
                 results = search_tool.search_web(query)
-                
+
+                shuttle_services = []
                 if results:
-                    shuttle_services = []
-                    
                     for result in results[:3]:
                         title = result.get("title", "")
                         content = result.get("content", "")
                         url = result.get("url", "")
-                        
+
                         if "shuttle" in title.lower() or "shuttle" in content.lower():
                             shuttle_services.append({
                                 "name": title[:50] if title else "Local Shuttle Service",
@@ -155,13 +177,23 @@ def find_shuttle_services(location: str, route_type: str | None = None) -> str:
                                 "contact": "See website for details",
                                 "url": url,
                             })
-                    
-                    if shuttle_services:
-                        return json.dumps({
-                            "location": location,
-                            "shuttle_services": shuttle_services,
-                            "source": "web_search",
-                        })
+                return shuttle_services
+
+            try:
+                # Cache shuttle service search for 24 hours (services don't change often)
+                shuttle_services = cached_api_call(
+                    endpoint="tavily_shuttle",
+                    params={"location": location},
+                    api_func=_search_shuttle_services,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                if shuttle_services:
+                    return json.dumps({
+                        "location": location,
+                        "shuttle_services": shuttle_services,
+                        "source": "web_search",
+                    })
             except Exception as e:
                 print(f"Web search error for shuttle services: {e}")
     except Exception as e:
@@ -206,7 +238,8 @@ def get_public_transportation(location: str, trailhead: str | None = None) -> st
         
         # Use Google Places API to find transit stations
         if Config.GOOGLE_PLACES_API_KEY:
-            try:
+            def _search_transit_stations() -> List[dict]:
+                """Search for transit stations via Google Places API."""
                 with httpx.Client() as client:
                     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
                     params = {
@@ -215,43 +248,52 @@ def get_public_transportation(location: str, trailhead: str | None = None) -> st
                         "type": "transit_station",
                         "key": Config.GOOGLE_PLACES_API_KEY,
                     }
-                    
                     response = client.get(url, params=params, timeout=10.0)
                     if response.status_code == 200:
-                        data = response.json()
-                        places = data.get("results", [])
-                        
-                        if places:
-                            transit_station = places[0]
-                            return json.dumps({
-                                "location": location,
-                                "trailhead": trailhead,
-                                "public_transit": {
-                                    "available": True,
-                                    "options": [
-                                        {
-                                            "type": "Transit Station",
-                                            "name": transit_station.get("name", "Transit Station"),
-                                            "location": transit_station.get("vicinity", location),
-                                            "distance": "Check route planner",
-                                        }
-                                    ],
-                                    "notes": "Limited public transportation to trailheads - check local transit authority",
-                                },
-                                "source": "google_places",
-                            })
+                        return response.json().get("results", [])[:5]
+                    return []
+
+            try:
+                # Cache transit station search for 24 hours (stations don't move)
+                places = cached_api_call(
+                    endpoint="google_places",
+                    params={"lat": lat, "lon": lon, "type": "transit_station"},
+                    api_func=_search_transit_stations,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                if places:
+                    transit_station = places[0]
+                    return json.dumps({
+                        "location": location,
+                        "trailhead": trailhead,
+                        "public_transit": {
+                            "available": True,
+                            "options": [
+                                {
+                                    "type": "Transit Station",
+                                    "name": transit_station.get("name", "Transit Station"),
+                                    "location": transit_station.get("vicinity", location),
+                                    "distance": "Check route planner",
+                                }
+                            ],
+                            "notes": "Limited public transportation to trailheads - check local transit authority",
+                        },
+                        "source": "google_places",
+                    })
             except Exception as e:
                 print(f"Google Places API error for public transit: {e}")
         
         # Fallback: Use web search via Tavily
         if Config.TAVILY_API_KEY:
-            try:
+            def _search_public_transit() -> List[dict]:
+                """Search for public transit via Tavily."""
                 search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
                 query = f"{search_location} public transportation bus"
                 results = search_tool.search_web(query)
-                
+
+                options = []
                 if results:
-                    options = []
                     for result in results[:2]:
                         title = result.get("title", "")
                         if "bus" in title.lower() or "transit" in title.lower():
@@ -260,11 +302,21 @@ def get_public_transportation(location: str, trailhead: str | None = None) -> st
                                 "name": title[:50],
                                 "location": location,
                             })
-                    
-                    return json.dumps({
-                        "location": location,
-                        "trailhead": trailhead,
-                        "public_transit": {
+                return options
+
+            try:
+                # Cache transit web search for 24 hours
+                options = cached_api_call(
+                    endpoint="tavily_transit",
+                    params={"location": search_location},
+                    api_func=_search_public_transit,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                return json.dumps({
+                    "location": location,
+                    "trailhead": trailhead,
+                    "public_transit": {
                             "available": len(options) > 0,
                             "options": options,
                             "notes": "Limited public transportation to trailheads",
@@ -301,35 +353,46 @@ def find_bike_transport_options(location: str) -> str:
     try:
         # Use web search via Tavily for bike transport
         if Config.TAVILY_API_KEY:
-            try:
+            def _search_bike_transport() -> dict:
+                """Search for bike transport options via Tavily."""
                 search_tool = WebSearchTool(api_key=Config.TAVILY_API_KEY)
                 query = f"{location} bike transport bike rack bus"
                 results = search_tool.search_web(query)
-                
+
+                options = []
+                restrictions = "Check with service provider"
+
                 if results:
-                    options = []
-                    restrictions = "Check with service provider"
-                    
                     for result in results[:3]:
                         content = result.get("content", "").lower()
                         if "bike rack" in content or "bike friendly" in content:
-                            options.append("Bike racks on buses")
+                            if "Bike racks on buses" not in options:
+                                options.append("Bike racks on buses")
                         if "shuttle" in content and "bike" in content:
-                            options.append("Bike-friendly shuttles")
+                            if "Bike-friendly shuttles" not in options:
+                                options.append("Bike-friendly shuttles")
                         if "restriction" in content:
                             restrictions = "Check with service provider for specific restrictions"
-                    
-                    if not options:
-                        options = ["Bike racks on buses", "Bike-friendly shuttles"]
-                    
-                    return json.dumps({
-                        "location": location,
-                        "bike_transport": {
-                            "options": options,
-                            "restrictions": restrictions,
-                        },
-                        "source": "web_search",
-                    })
+
+                if not options:
+                    options = ["Bike racks on buses", "Bike-friendly shuttles"]
+
+                return {"options": options, "restrictions": restrictions}
+
+            try:
+                # Cache bike transport search for 24 hours
+                result = cached_api_call(
+                    endpoint="tavily_bike_transport",
+                    params={"location": location},
+                    api_func=_search_bike_transport,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                return json.dumps({
+                    "location": location,
+                    "bike_transport": result,
+                    "source": "web_search",
+                })
             except Exception as e:
                 print(f"Web search error for bike transport: {e}")
     except Exception as e:
@@ -368,7 +431,8 @@ def get_car_rental_recommendations(location: str) -> str:
         
         # Use Google Places API to find car rental companies
         if Config.GOOGLE_PLACES_API_KEY:
-            try:
+            def _search_car_rentals() -> List[dict]:
+                """Search for car rentals via Google Places API."""
                 with httpx.Client() as client:
                     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
                     params = {
@@ -377,31 +441,39 @@ def get_car_rental_recommendations(location: str) -> str:
                         "type": "car_rental",
                         "key": Config.GOOGLE_PLACES_API_KEY,
                     }
-                    
                     response = client.get(url, params=params, timeout=10.0)
                     if response.status_code == 200:
-                        data = response.json()
-                        places = data.get("results", [])
-                        
-                        car_rentals = []
-                        for place in places[:5]:  # Limit to 5 results
-                            name = place.get("name", "Car Rental")
-                            vicinity = place.get("vicinity", location)
-                            rating = place.get("rating")
-                            
-                            car_rentals.append({
-                                "company": name,
-                                "location": vicinity,
-                                "recommended": rating and rating >= 4.0 if rating else False,
-                                "rating": rating,
-                            })
-                        
-                        if car_rentals:
-                            return json.dumps({
-                                "location": location,
-                                "car_rentals": car_rentals,
-                                "source": "google_places",
-                            })
+                        return response.json().get("results", [])[:5]
+                    return []
+
+            try:
+                # Cache car rental search for 24 hours (rental locations don't change often)
+                places = cached_api_call(
+                    endpoint="google_places",
+                    params={"lat": lat, "lon": lon, "type": "car_rental"},
+                    api_func=_search_car_rentals,
+                    ttl=86400.0,  # 24 hours
+                )
+
+                car_rentals = []
+                for place in places or []:
+                    name = place.get("name", "Car Rental")
+                    vicinity = place.get("vicinity", location)
+                    rating = place.get("rating")
+
+                    car_rentals.append({
+                        "company": name,
+                        "location": vicinity,
+                        "recommended": rating and rating >= 4.0 if rating else False,
+                        "rating": rating,
+                    })
+
+                if car_rentals:
+                    return json.dumps({
+                        "location": location,
+                        "car_rentals": car_rentals,
+                        "source": "google_places",
+                    })
             except Exception as e:
                 print(f"Google Places API error for car rentals: {e}")
     except Exception as e:
