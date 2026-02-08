@@ -334,7 +334,7 @@ class TestOrchestratorAgent:
             errors=[],
         )
         
-        with patch('agent.agents.orchestrator.ChatOpenAI') as mock_chat:
+        with patch('agent.models.create_llm') as mock_create_llm:
             mock_llm = AsyncMock()
             mock_llm.ainvoke = AsyncMock(return_value=MagicMock(
                 content=json.dumps({
@@ -346,13 +346,13 @@ class TestOrchestratorAgent:
                     "difficulty": "intermediate",
                 })
             ))
-            mock_chat.return_value = mock_llm
-            
+            mock_create_llm.return_value = mock_llm
+
             agent = OrchestratorAgent()
             agent.llm = mock_llm
-            
+
             plan = await agent.synthesize_plan(state)
-            
+
             assert plan["title"] == "Colorado Adventure"
             assert plan["estimated_duration_days"] == 3
 
